@@ -14,7 +14,7 @@ args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 source = Path(__file__).resolve().parents[1] / 'src/Service/WebPage.h'
 html = source.read_text().split('R"raw(\n', 1)[1].rsplit(')raw";', 1)[0]
-status = dict(type='status', version='5.1', ssid="Muggles' Wand", password='12345678',
+status = dict(type='status', version='6.2-rc3', ssid="Muggles' Wand", password='12345678',
               bleName="Muggles' Wand", mode=2, bleEnabled=True, bleConnected=False,
               charging=False, receiver=True, patterns=['MugglesWand', 'Star', 'Rainbow'],
               gestureProfile='legacy-v1', gestureProfileTitle='原版手势模型',
@@ -90,14 +90,20 @@ with sync_playwright() as p:
     assert page.get_by_role('heading', name='红外配件').is_visible()
     page.get_by_role('link', name='配置', exact=True).click()
     page.locator('#settings').wait_for()
+    page.locator('#settings').screenshot(path=str(args.output / 'readme-settings.png'))
     assert page.locator('#control').is_hidden()
     assert page.get_by_role('link', name='手势与灯效').is_visible()
     page.get_by_role('link', name='红外配件').click()
     page.locator('#ir-pair').click()
     page.get_by_text('已连接到 80:53:E0:05:EB:C8').wait_for()
     page.locator('#ir-settings').screenshot(path=str(args.output / 'ir-settings.png'))
+    page.locator('#ir-settings').screenshot(path=str(args.output / 'readme-ir.png'))
     page.get_by_role('link', name='发送指令', exact=True).click()
+    page.locator('#control').screenshot(path=str(args.output / 'readme-control.png'))
     page.screenshot(path=str(args.output / 'product-control.png'), full_page=True)
+    page.get_by_role('link', name='设备', exact=True).click()
+    page.locator('#device').screenshot(path=str(args.output / 'readme-device.png'))
+    page.get_by_role('link', name='发送指令', exact=True).click()
     page.locator('#ir-command-send').click()
     assert commands[-1] == 'web:ir 66 0'
     page.get_by_role('link', name='配置', exact=True).click()
@@ -116,6 +122,11 @@ with sync_playwright() as p:
     assert page.locator('#ir-signals .ir-slot').count() == 9
     page.locator('#ir-add').click()
     assert commands[-1] == 'web:ir 65 9'
+    page.get_by_role('link', name='返回配置').click()
+    page.get_by_role('link', name='手势与灯效').click()
+    page.locator('#gesture-settings').screenshot(path=str(args.output / 'readme-gestures.png'))
+    page.get_by_role('link', name='返回配置').click()
+    page.get_by_role('link', name='红外配件').click()
     page.get_by_role('link', name='返回配置').click()
     page.get_by_role('link', name='红外配件').click()
     page.locator('#ir-unpair').click()
