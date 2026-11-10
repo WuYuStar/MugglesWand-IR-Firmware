@@ -10,13 +10,6 @@
 bool ble_toggle(void);
 
 /**
- * @brief 模拟单击指定的键盘按键（按下 + 延迟 + 释放）
- * @param keycode 键码 (定义在 BLEHIDKeys.h 中)
- * @return bool 发送成功返回 true，未连接或未开启返回 false
- */
-bool ble_keyboard_tap_key(uint8_t keycode);
-
-/**
  * @brief 发送鼠标相对位移报文
  * @param dx X 轴位移 (-127 ~ 127)
  * @param dy Y 轴位移 (-127 ~ 127)
@@ -36,3 +29,6 @@ bool ble_consumer_send(uint16_t usage_code);
  * @return true 发送成功，false 发送失败或未连接
  */
 bool ble_update_battery(void);
+// Cached connection state for the local control page.
+bool ble_is_enabled(void);
+bool ble_is_connected(void);

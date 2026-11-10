@@ -1,14 +1,29 @@
 #include "APP.h"
+#include "Service/HomeAssistant.h"
+#include "Service/GestureBindings.h"
 #include "APP_Lumos.h"
 #include "APP_BLE_HID.h"
 #include "APP_EspNow.h"
 #include "APP_POV.h"
 #include "Service/EventBus.h"
+#include "Service/AP.h"
+#include "Service/IrLink.h"
+#include "Service/GestureEffects.h"
+#include "Model/ModelStore.h"
+#include "Model/gesture_buffer.h"
 #include "HAL/HAL.h"
 #include "HAL/WS2812_Animation/AnimFlow.hpp"
 #include "HAL/WS2812_Animation/AnimBlink.hpp"
 
 QueueHandle_t app_queue = NULL;
+
+// Run on the APP task so switching modes cannot leave multiple apps active.
+static void exit_active_modes()
+{
+    if (APP_ble_mouse_in_mode()) APP_ble_mouse_mode_exit();
+    if (APP_ble_volume_in_mode()) APP_ble_volume_mode_exit();
+    if (APP_POV_in_mode()) APP_POV_mode_exit();
+}
 
 static void app_task(void *pvParameters)
 {
@@ -18,27 +33,27 @@ static void app_task(void *pvParameters)
     {
         if (xQueueReceive(app_queue, &event, portMAX_DELAY))
         {
+            if(ModelStore::busy())continue;
             switch (event.id)
             {
+            case EVENT_APP_SET_MODE:
+                exit_active_modes();
+                EventBus::publish(event.param1.i32 == -1 ? EVENT_IMU_RESET_MUX : EVENT_IMU_SET_MUX,
+                                  event.param1.i32);
+                break;
+
+            case EVENT_GESTURE_FX_PREVIEW:
+                gesture_effect_play(event.param1.i32);
+                break;
+            case EVENT_GESTURE_TRIGGER:
+                if(!gestureBufferCurrent(event.generation))break;
             case EVENT_GESTURE_DETECTED:
+            {
+                const int effect=event.id==EVENT_GESTURE_TRIGGER?event.param2.i32:-1;
+                if(event.param1.i32 < -1 || event.param1.i32>kLastGestureAction || gesture_action_retired(event.param1.i32))break;
+                if (event.param1.i32>=0) exit_active_modes();
                 switch (event.param1.i32)
                 {
-                case 0:
-                    HAL::ws2812_start_fx(new AnimFlow(0xFFFFFF));
-                    APP_espnow_tx_signal(MSG_SIGNAL_1); // 关灯
-                    break;
-                case 1:
-                    HAL::ws2812_start_fx(new AnimBlink(CRGB::White, 200));
-                    APP_espnow_tx_signal(MSG_SIGNAL_2); // 开灯
-                    break;
-                case 2:
-                    HAL::ws2812_start_fx(new AnimFlow(0xFF0000));
-                    APP_ble_keyboard_press_up(); // 键盘↑
-                    break;
-                case 3:
-                    HAL::ws2812_start_fx(new AnimFlow(0x00FF00));
-                    APP_ble_keyboard_press_down(); // 键盘↓
-                    break;
                 case 4:
                     APP_ble_mouse_mode_enter(); // 鼠标模式
                     break;
@@ -51,23 +66,30 @@ static void app_task(void *pvParameters)
                 case 7:
                     APP_POV_mode_enter(); // POV 光绘模式
                     break;
+                default:
+                    if (event.param1.i32 >= 12 && event.param1.i32 <= 43) {
+                        ir_link_command(0x42, static_cast<uint8_t>(event.param1.i32 - 12));
+                    } else if (event.param1.i32 >= kFirstHaAction) ha_send(event.param1.i32);
+                    break;
                 }
+                if(event.param1.i32>=0){
+                    int action=event.param1.i32;
+                    EventBus::publish(EVENT_IMU_SET_MUX,action==4?3:action==6?4:action==7?5:2);
+                }
+                if (effect>=0) gesture_effect_play(effect);
                 break;
+            }
 
             case EVENT_BTN_SHORT_PRESS:
                 if (1 == event.param1.i32)
                 {
-                    // 单击退出当前所有开启的模式（与各模块的模式状态保持一致）
-                    if (APP_ble_mouse_in_mode())
-                        APP_ble_mouse_mode_exit();
-                    if (APP_ble_volume_in_mode())
-                        APP_ble_volume_mode_exit();
-                    if (APP_POV_in_mode())
-                        APP_POV_mode_exit();
+                    exit_active_modes();
+                    EventBus::publish(EVENT_IMU_SET_MUX,2);
                 }
                 break;
 
             case EVENT_IMU_DATA_UPDATED:
+                if(!gestureBufferCurrent(event.generation))break;
                 // 数据语义由各模式的 mux 决定：3=角速度 / 4=修正角度 / 5=线性加速度
                 if (APP_ble_mouse_in_mode())
                 {
@@ -101,6 +123,9 @@ void APP_init()
 {
     app_queue = xQueueCreate(16, sizeof(SystemEvent)); // 深度16，容纳高频鼠标数据
     EventBus::subscribe(EVENT_GESTURE_DETECTED, app_queue);
+    EventBus::subscribe(EVENT_GESTURE_TRIGGER, app_queue);
+    EventBus::subscribe(EVENT_GESTURE_FX_PREVIEW, app_queue);
+    EventBus::subscribe(EVENT_APP_SET_MODE, app_queue);
     EventBus::subscribe(EVENT_BTN_SHORT_PRESS, app_queue);
     EventBus::subscribe(EVENT_IMU_DATA_UPDATED, app_queue);
     EventBus::subscribe(EVENT_POV_SET, app_queue);

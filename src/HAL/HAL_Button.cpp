@@ -3,6 +3,7 @@
 */
 #include "HAL.h"
 #include <Arduino.h>
+#include <atomic>
 #include "Config.h"
 #include "Service/EventBus.h"
 #include "HAL/WS2812_Animation/AnimTap.hpp"
@@ -16,7 +17,7 @@
 // 按键实时按下状态（供 AnimTap 反馈动画轮询读取，按下瞬间即时响应）
 static volatile bool s_button_pressed = false;
 // 关机动画"关机已确认"标志（动画播完的收尾帧置位，作为关机事件触发信号）
-static bool s_shutdown_done = false;
+static std::atomic<bool> s_shutdown_done{false};
 
 static void button_task(void *param)
 {
@@ -57,7 +58,7 @@ static void button_task(void *param)
                                                          0, WS2812_LED_COUNT, SHUTDOWN_ANIM_MS));
                 // 等待动画播完（收尾帧置位 s_shutdown_done），超时兜底后发布关机命令
                 uint32_t waitDeadline = millis() + SHUTDOWN_ANIM_MS + 500;
-                while (!s_shutdown_done && millis() < waitDeadline)
+                while (!s_shutdown_done && static_cast<int32_t>(millis()-waitDeadline)<0)
                 {
                     vTaskDelay(pdMS_TO_TICKS(20));
                 }
@@ -75,7 +76,7 @@ static void button_task(void *param)
                 if (pressDuration < TURN_OFF_TIME)
                 {
                     // 短按逻辑
-                    pressCount++;
+                    if(pressCount<15)++pressCount;
                     lastReleaseTime = millis();
                 }
             }

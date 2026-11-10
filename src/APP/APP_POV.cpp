@@ -6,12 +6,13 @@
 #include "Service/DualPrint.h"
 #include "Service/EventBus.h"
 #include <math.h>
+#include <atomic>
 #include <FastLED.h>
 
 // ==================== POV 模式状态 ====================
 static bool pov_mode_enabled = false; // 模式激活标志（单击退出）
 static bool pov_trigger_armed = true; // 触发边沿检测：true=静止待命，false=触发冷却中
-static bool pov_anim_playing = false; // 光绘动画播放中标志（由 AnimPOV 析构回调复位）
+static std::atomic<bool> pov_anim_playing{false}; // 光绘动画播放中标志（由 AnimPOV 析构回调复位）
 
 // 触发检测阈值（线性加速度幅度，单位 g）
 #define POV_TRIGGER_ACCEL 0.2f // 正交于 Y 轴挥动的触发阈值
@@ -66,7 +67,6 @@ void APP_POV_mode_enter(void)
     pov_trigger_armed = !pov_anim_playing;
     APP_Lumos_on(CRGB::Purple); // 紫色模式指示灯（区别于鼠标蓝、音量红）
     DualSerial.println("[APP] POV mode enabled");
-    EventBus::publish(EVENT_IMU_SET_MUX, 5); // 数据流切换为剔除重力的线性加速度
 }
 
 void APP_POV_mode_exit(void)
@@ -76,7 +76,6 @@ void APP_POV_mode_exit(void)
     pov_mode_enabled = false;
     APP_Lumos_off(); // 熄灭模式指示灯并恢复手势状态灯
     DualSerial.println("[APP] POV mode disabled");
-    EventBus::publish(EVENT_IMU_SET_MUX, 2); // 数据流恢复为手势训练缓冲区
 }
 
 bool APP_POV_in_mode(void)
@@ -113,4 +112,10 @@ void APP_POV_list(void)
         DualSerial.printf("  [%d] %s (%d x %d)\n",
                           i, kPovPatterns[i].name, kPovPatterns[i].rows, kPovPatterns[i].width);
     }
+}
+
+uint8_t APP_POV_pattern_count(void) { return POV_PATTERN_COUNT; }
+const char *APP_POV_pattern_name(uint8_t index)
+{
+    return index < POV_PATTERN_COUNT ? kPovPatterns[index].name : "";
 }

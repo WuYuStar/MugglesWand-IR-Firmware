@@ -4,6 +4,7 @@
 #include "Service/DualPrint.h"
 #include "Service/EventBus.h"
 #include <Arduino.h>
+#include <math.h>
 #include <FastLED.h>
 
 // ====================== 鼠标参数 ============================
@@ -41,7 +42,6 @@ void APP_ble_mouse_mode_enter(void)
     mouse_mode = true;
     APP_Lumos_on(CRGB::Blue); // 蓝色模式指示灯
     DualSerial.println("[APP] Mouse mode enabled");
-    EventBus::publish(EVENT_IMU_SET_MUX, 3); // 数据流切换为角速度 (valid_gx/gz)
 }
 
 void APP_ble_mouse_mode_exit(void)
@@ -51,7 +51,6 @@ void APP_ble_mouse_mode_exit(void)
     mouse_mode = false;
     APP_Lumos_off(); // 熄灭模式指示灯并恢复手势状态灯
     DualSerial.println("[APP] Mouse mode disabled");
-    EventBus::publish(EVENT_IMU_SET_MUX, 2); // 数据流恢复为手势训练缓冲区
 }
 
 bool APP_ble_mouse_in_mode(void)
@@ -61,15 +60,16 @@ bool APP_ble_mouse_in_mode(void)
 
 // ==================== 音量旋钮模式状态 (手势6进入, 单击退出) ====================
 static bool volume_mode = false;
+static bool volume_initialized=false;
 
 void APP_ble_volume_mode_enter(void)
 {
     if (volume_mode)
         return;
     volume_mode = true;
+    volume_initialized=false;
     APP_Lumos_on(CRGB::Red); // 红色模式指示灯
     DualSerial.println("[APP] Volume mode enabled");
-    EventBus::publish(EVENT_IMU_SET_MUX, 4); // 数据流切换为修正角度 (corrected_angle_deg)
 }
 
 void APP_ble_volume_mode_exit(void)
@@ -79,7 +79,6 @@ void APP_ble_volume_mode_exit(void)
     volume_mode = false;
     APP_Lumos_off(); // 熄灭模式指示灯并恢复手势状态灯
     DualSerial.println("[APP] Volume mode disabled");
-    EventBus::publish(EVENT_IMU_SET_MUX, 2); // 数据流恢复为手势训练缓冲区
 }
 
 bool APP_ble_volume_in_mode(void)
@@ -87,18 +86,9 @@ bool APP_ble_volume_in_mode(void)
     return volume_mode;
 }
 
-bool APP_ble_keyboard_press_up(void)
-{
-    return ble_keyboard_tap_key(KEY_UP); // KEY_UP 定义在 BLEHIDKeys.h 中为 0x52
-}
-
-bool APP_ble_keyboard_press_down(void)
-{
-    return ble_keyboard_tap_key(KEY_DOWN); // KEY_DOWN 定义在 BLEHIDKeys.h 中为 0x51
-}
-
 void APP_ble_mouse_move(float gx_rad, float gz_rad)
 {
+    if(!isfinite(gx_rad)||!isfinite(gz_rad))return;
     // 死区过滤
     if (fabsf(gx_rad) < MOUSE_DEADZONE)
         gx_rad = 0.0f;
@@ -118,9 +108,9 @@ void APP_ble_mouse_move(float gx_rad, float gz_rad)
 
 void APP_ble_volume_knob(float angle_deg)
 {
+    if(!isfinite(angle_deg))return;
     // ---- 静态状态：跨调用保持 ----
     static float last_raw_angle = 0.0f; // 上一次的原始角度（用于计算原始 delta）
-    static bool initialized = false;    // 首次调用标志
     static float smooth_delta = 0.0f;   // EMA 滤波后的角度变化量（度/周期）
     static float accumulator = 0.0f;    // 旋转累积器（度）
     static uint32_t last_send_ms = 0;   // 上次发送 BLE 报文的时间戳
@@ -128,13 +118,13 @@ void APP_ble_volume_knob(float angle_deg)
     uint32_t now_ms = millis();
 
     // ---- 1. 首次调用初始化 ----
-    if (!initialized)
+    if (!volume_initialized)
     {
         last_raw_angle = angle_deg;
         smooth_delta = 0.0f;
         accumulator = 0.0f;
         last_send_ms = now_ms;
-        initialized = true;
+        volume_initialized = true;
         return;
     }
 

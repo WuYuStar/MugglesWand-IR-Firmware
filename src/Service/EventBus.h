@@ -32,6 +32,8 @@ enum EventID
     EVENT_SYS_AP,       // 无参数
     EVENT_SYS_ESPNOW,   // 无参数
 
+    EVENT_APP_SET_MODE, // param1: IMU mode; exit active apps before changing mode
+
     EVENT_BTN_SHORT_PRESS, // 按键短按事件, 参数为连击次数 (1=单击, 2=双击, 3=三击)
 
     // --- IMU 事件 ---
@@ -49,6 +51,8 @@ enum EventID
     EVENT_POWER_NOT_CHARGING, // 未充电, 无参数
 
     // --- POV 光绘参数设置事件 ---
+    EVENT_GESTURE_TRIGGER, // param1: action (-1..7), param2: added light effect (-1..25)
+    EVENT_GESTURE_FX_PREVIEW, // param1: effect (1..25), never executes a function
     EVENT_POV_SET, // 设置下一次光绘触发的参数, param1: 图案索引 (0~N-1), param2: reverse (1=倒序播放)
 
 };
@@ -71,6 +75,7 @@ struct SystemEvent
     EventID id;
     EventParam param1; // 语义由各 EventID 约定
     EventParam param2; // 语义由各 EventID 约定
+    uint32_t generation; // Reject recognition queued before a mode reset.
 };
 
 // 最大订阅数量限制
@@ -104,5 +109,5 @@ public:
     /// @param param1  事件参数1（语义由事件约定）
     /// @param param2  事件参数2（语义由事件约定）
     /// @return true 至少成功投递到一个订阅者，false 无订阅者或失败
-    static bool publish(EventID eventId, EventParam param1 = 0, EventParam param2 = 0);
+    static bool publish(EventID eventId, EventParam param1 = 0, EventParam param2 = 0, uint32_t generation=0);
 };

@@ -6,13 +6,17 @@
 #include <Arduino.h>
 #include "Config.h"
 #include "Service/EventBus.h"
+#include "Model/ModelStore.h"
+#include "Service/AP_Web.h"
+#include "Service/OTA.h"
+#include <atomic>
 
 static TimerHandle_t shutdown_timer = NULL;
 static QueueHandle_t power_queue = NULL;
 
 #define AUTO_POWER_OFF_TIME 60000 // 1分钟
 
-static bool autoPowerOffDisabled = false;
+static std::atomic<bool> autoPowerOffDisabled{false};
 
 // ========== 充电检测 + LED 闪烁（分时复用 PIN_CHG_DET）==========
 static TimerHandle_t chg_led_timer = NULL;
@@ -64,9 +68,11 @@ void HAL::power_off(void)
 // 定时器超时回调函数：1分钟到了，执行休眠
 void power_off_timer_callback(TimerHandle_t xTimer)
 {
-    DualSerial.println("[Power] IMU idle for 1 min. Sleeping...");
-
-    EventBus::publish(EVENT_SYS_SLEEP);
+    // Timer callbacks never print/network-block. Recheck actual idle state.
+    if(ModelStore::busy()||OTA_active()||autoPowerOffDisabled||ap_web_has_clients()||!HAL::ICM42670P_idle()){
+        xTimerReset(shutdown_timer,0);return;
+    }
+    EventBus::publish(EVENT_SYS_SLEEP,1);
 }
 
 // Power 模块的任务，负责接收事件

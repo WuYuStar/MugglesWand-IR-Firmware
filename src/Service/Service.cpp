@@ -12,6 +12,8 @@
 #include "Sleep.h"
 #include "HAL/HAL.h"
 #include <esp_system.h>
+#include "Model/ModelStore.h"
+#include "AP_Web.h"
 
 // 把 esp_reset_reason_t 枚举翻译成可读字符串。
 static const char *reset_reason_to_str(esp_reset_reason_t reason)
@@ -48,16 +50,6 @@ QueueHandle_t service_queue = NULL;
 
 static void system_service_task(void *param)
 {
-    service_queue = xQueueCreate(8, sizeof(SystemEvent));
-    EventBus::subscribe(EVENT_SYS_INFO, service_queue);
-    EventBus::subscribe(EVENT_SYS_REBOOT, service_queue);
-    EventBus::subscribe(EVENT_SYS_SLEEP, service_queue);
-    EventBus::subscribe(EVENT_SYS_SHUTDOWN, service_queue);
-    EventBus::subscribe(EVENT_SYS_OTA, service_queue);
-    EventBus::subscribe(EVENT_SYS_BLE, service_queue);
-    EventBus::subscribe(EVENT_SYS_AP, service_queue);
-    EventBus::subscribe(EVENT_SYS_ESPNOW, service_queue);
-    EventBus::subscribe(EVENT_SYS_DEBUG, service_queue);
 
     SystemEvent event;
 
@@ -65,6 +57,7 @@ static void system_service_task(void *param)
     {
         if (xQueueReceive(service_queue, &event, portMAX_DELAY))
         {
+            if(ModelStore::busy() && event.id!=EVENT_SYS_INFO)continue;
             switch (event.id)
             {
             case EVENT_SYS_INFO:
@@ -86,6 +79,7 @@ static void system_service_task(void *param)
                 ESP.restart();
                 break;
             case EVENT_SYS_SLEEP:
+                if(event.param1.i32==1&&(!HAL::ICM42670P_idle()||ap_web_has_clients()||OTA_active()))break;
                 EventBus::publish(EVENT_IMU_RESET_MUX);
                 EventBus::publish(EVENT_IMU_SET_WOM);
                 HAL::ws2812_stop();
@@ -125,6 +119,18 @@ static void system_service_task(void *param)
 /************ Init ************/
 bool service_init()
 {
+    service_queue = xQueueCreate(8, sizeof(SystemEvent));
+    EventBus::subscribe(EVENT_SYS_INFO, service_queue);
+    EventBus::subscribe(EVENT_SYS_REBOOT, service_queue);
+    EventBus::subscribe(EVENT_SYS_SLEEP, service_queue);
+    EventBus::subscribe(EVENT_SYS_SHUTDOWN, service_queue);
+    EventBus::subscribe(EVENT_SYS_OTA, service_queue);
+    EventBus::subscribe(EVENT_SYS_BLE, service_queue);
+    EventBus::subscribe(EVENT_SYS_AP, service_queue);
+    EventBus::subscribe(EVENT_SYS_ESPNOW, service_queue);
+    EventBus::subscribe(EVENT_SYS_DEBUG, service_queue);
+
+    if(!service_queue)return false;
     xTaskCreatePinnedToCore(
         system_service_task,
         "system_service_task",

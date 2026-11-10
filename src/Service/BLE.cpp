@@ -1,25 +1,24 @@
 #include "BLE.h"
 #include <NimBLEDevice.h>
+#include <math.h>
 #include <NimBLEHIDDevice.h>
 #include "HAL/HAL.h"
 #include "Config.h"
 
 // 全局静态变量管理内部状态
 static String _device_name = BLE_DEVICE_NAME;
-static bool _is_ble_enabled = false;
-static bool _is_connected = false;
+static volatile bool _is_ble_enabled = false;
+static volatile bool _is_connected = false;
 
 // FreeRTOS 任务句柄与退出标志
 static TaskHandle_t _battery_task_handle = nullptr;
-static volatile bool _battery_task_should_exit = false;
 
 // NimBLE 核心指针
 static NimBLEServer *pServer = nullptr;
 
 // HID 核心指针与特征值
-// Report ID 1: Keyboard   |   Report ID 2: Mouse   |   Report ID 3: Consumer Control
+// Report ID 2: Mouse   |   Report ID 3: Consumer Control
 static NimBLEHIDDevice *pHID = nullptr;
-static NimBLECharacteristic *pKeyboardInput  = nullptr; // 键盘输入 (Report ID 1)
 static NimBLECharacteristic *pMouseInput     = nullptr; // 鼠标输入 (Report ID 2)
 static NimBLECharacteristic *pConsumerInput  = nullptr; // 消费类控制输入：音量、播放等媒体键 (Report ID 3)
 
@@ -40,42 +39,9 @@ class BatteryCallbacks : public NimBLECharacteristicCallbacks
     }
 };
 
-// 复合 HID 报告描述符：Keyboard (ID 1) + Mouse (ID 2) + Consumer Control (ID 3)
+// 复合 HID 报告描述符：Mouse (ID 2) + Consumer Control (ID 3)
 // 各 Report ID 独立，主机端根据 ID 将数据分发到对应驱动子系统
 static const uint8_t _hidReportDescriptor[] = {
-    // ==================== Report ID 1: Keyboard ====================
-    0x05, 0x01, // Usage Page (Generic Desktop)
-    0x09, 0x06, // Usage (Keyboard)
-    0xA1, 0x01, // Collection (Application)
-    0x85, 0x01, //   Report ID (1)
-
-    // 修饰键字节 (Ctrl, Shift, Alt, GUI)
-    0x05, 0x07, //   Usage Page (Key Codes)
-    0x19, 0xE0, //   Usage Minimum (Left Control)
-    0x29, 0xE7, //   Usage Maximum (Right GUI)
-    0x15, 0x00, //   Logical Minimum (0)
-    0x25, 0x01, //   Logical Maximum (1)
-    0x75, 0x01, //   Report Size (1 bit)
-    0x95, 0x08, //   Report Count (8)
-    0x81, 0x02, //   Input (Data, Variable, Absolute)
-
-    // 保留字节
-    0x95, 0x01, //   Report Count (1)
-    0x75, 0x08, //   Report Size (8 bits)
-    0x81, 0x01, //   Input (Constant)
-
-    // 6键无冲无优先级键码阵列 (6KRO)
-    0x95, 0x06,       //   Report Count (6)
-    0x75, 0x08,       //   Report Size (8 bits)
-    0x15, 0x00,       //   Logical Minimum (0)
-    0x26, 0xE7, 0x00, //   Logical Maximum (231)
-    0x05, 0x07,       //   Usage Page (Key Codes)
-    0x19, 0x00,       //   Usage Minimum (0)
-    0x2A, 0xE7, 0x00, //   Usage Maximum (231)
-    0x81, 0x00,       //   Input (Data, Array, Absolute)
-
-    0xC0, // End Collection (Keyboard)
-
     // ==================== Report ID 2: Mouse ====================
     0x05, 0x01, // Usage Page (Generic Desktop)
     0x09, 0x02, // Usage (Mouse)
@@ -165,8 +131,8 @@ bool ble_update_battery(void)
     }
 
     float level = (HAL::MAX17048_getSOC() + 0.5f); // 加0.5为了取整时四舍五入
-    if (level > 100)
-        level = 100; // 限制最大值为 100
+    if(!isfinite(level))return false;
+    level=constrain(level,0.0f,100.0f); // 限制最大值为 100
 
     pHID->setBatteryLevel((uint8_t)level, 1);
 
@@ -175,58 +141,11 @@ bool ble_update_battery(void)
 
 /**
  * @brief 电池电量定期上报的 FreeRTOS 任务函数
- * @details 通过 _battery_task_should_exit 标志位实现自退出，
- *          避免外部 vTaskDelete 在任务执行关键操作时强制终止造成状态损坏。
+ * @details 对象和任务在本次开机期间保留，关闭蓝牙时不发送通知。
  */
 static void ble_battery_task(void *pvParameters)
 {
-    while (!_battery_task_should_exit)
-    {
-        // 尝试更新电量，内部已包含状态校验
-        ble_update_battery();
-
-        // 延时 10 秒，期间分段检查退出标志以提升响应速度
-        for (int i = 0; i < 10 && !_battery_task_should_exit; i++)
-        {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
-    }
-
-    _battery_task_handle = nullptr;
-    vTaskDelete(nullptr); // 任务自退出
-}
-
-// 辅助函数：发送标准的8字节键盘HID报文
-static void send_keyboard_report(uint8_t modifiers, uint8_t keycode)
-{
-    if (!_is_connected || pKeyboardInput == nullptr)
-        return;
-
-    uint8_t report[8] = {0};
-    report[0] = modifiers; // 修饰键字节
-    report[2] = keycode;   // 第一个键码槽
-
-    pKeyboardInput->setValue(report, sizeof(report));
-    pKeyboardInput->notify();
-}
-
-// 模拟一次完整的按键点击（按下 + 延迟 + 释放）
-bool ble_keyboard_tap_key(uint8_t keycode)
-{
-    if (!_is_ble_enabled || !_is_connected || pKeyboardInput == nullptr)
-    {
-        return false;
-    }
-
-    // 1. 发送按键按下报文
-    send_keyboard_report(0, keycode);
-    delay(25); // 保持时间
-
-    // 2. 发送全释放（空）报文
-    send_keyboard_report(0, 0);
-    delay(25); // 间隙时间
-
-    return true;
+    for(;;){ble_update_battery();vTaskDelay(pdMS_TO_TICKS(10000));}
 }
 
 // 发送鼠标相对位移报文
@@ -253,106 +172,31 @@ bool ble_mouse_move(int8_t dx, int8_t dy)
 
 bool ble_toggle(void)
 {
-    if (!_is_ble_enabled)
-    {
-        // --- 开启 BLE 逻辑 ---
-        DualSerial.println("[BLE] Initializing BLE service with HID Keyboard...");
-
-        // 1. 初始化 NimBLE 堆栈
+    if(!pServer){
         NimBLEDevice::init(_device_name.c_str());
-
-        NimBLEDevice::setSecurityAuth(true, true, true);
-
-        // 2. 创建 Server
-        pServer = NimBLEDevice::createServer();
+        NimBLEDevice::setSecurityAuth(true,true,true);
+        pServer=NimBLEDevice::createServer();
         pServer->setCallbacks(new MyServerCallbacks());
-
-        // 3. 加入 HID 键盘初始化逻辑
-        pHID = new NimBLEHIDDevice(pServer);
-        pHID->setReportMap((uint8_t *)_hidReportDescriptor, sizeof(_hidReportDescriptor));
-        pHID->setPnp(0x02, 0x05ac, 0x0255, 0x0110); // 设置设备 PnP 信息 (可选，增强系统兼容性)
-        pHID->setHidInfo(0x00, 0x01);               // 0x01 代表键盘设备属性
-        // 提取 Report ID 1 对应的键盘输入特征值指针
-        pKeyboardInput = pHID->getInputReport(1);
-        // 提取 Report ID 2 对应的鼠标输入特征值指针
-        pMouseInput = pHID->getInputReport(2);
-        // 提取 Report ID 3 对应的 Consumer Control 输入特征值指针
-        pConsumerInput = pHID->getInputReport(3);
-
-        // 注册电池 CCCD 订阅回调——在 Windows 订阅时触发首次电量上报
+        pHID=new NimBLEHIDDevice(pServer);
+        pHID->setReportMap((uint8_t*)_hidReportDescriptor,sizeof(_hidReportDescriptor));
+        pHID->setPnp(0x02,0x05ac,0x0255,0x0110);pHID->setHidInfo(0,1);
+        pMouseInput=pHID->getInputReport(2);pConsumerInput=pHID->getInputReport(3);
         pHID->getBatteryLevel()->setCallbacks(new BatteryCallbacks());
-
-        // 4. 开始广播
-        NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-        pAdvertising->setName(_device_name.c_str());
-        pAdvertising->addServiceUUID(pHID->getHidService()->getUUID()); // 广播 HID 服务 UUID 确保设备类型识别
-        pAdvertising->setAppearance(0x03C4);                            // 设置外观
-        pAdvertising->enableScanResponse(true);                         // 开启 scan response，提升部分主机（如 Windows）的设备名识别兼容性
-        pAdvertising->start();
-
-        _is_ble_enabled = true;
-
-        // 5. 创建电量定期上报任务
-        if (_battery_task_handle == nullptr)
-        {
-            _battery_task_should_exit = false;
-            xTaskCreatePinnedToCore(
-                ble_battery_task,      // 任务函数
-                "ble_bat_task",        // 任务名称
-                4096,                  // 实测不应该小于2.4KB，留足余量到 4KB
-                nullptr,               // 传递给任务的参数
-                1,                     // 任务优先级
-                &_battery_task_handle, // 任务句柄
-                0);                    // 固定在核心 0
-        }
-
-        DualSerial.println("[BLE] Service started, advertising as '" + _device_name + "'\n");
+        auto *advertising=NimBLEDevice::getAdvertising();
+        advertising->setName(_device_name.c_str());
+        advertising->addServiceUUID(pHID->getHidService()->getUUID());
+        advertising->setAppearance(0x03C4);advertising->enableScanResponse(true);
+        xTaskCreatePinnedToCore(ble_battery_task,"ble_bat_task",4096,nullptr,1,&_battery_task_handle,0);
     }
-    else
-    {
-        // --- 关闭 BLE 逻辑 ---
-
-        // 1. 通知电量上报任务自行退出，避免外部强制 delete 造成状态损坏
-        if (_battery_task_handle != nullptr)
-        {
-            _battery_task_should_exit = true;
-            // 等待任务自退出（任务内部会将 _battery_task_handle 置空）
-            while (_battery_task_handle != nullptr)
-            {
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-        }
-
-        _is_ble_enabled = false;
-        _is_connected = false;
-
-        // 2. 停止广播
-        NimBLEDevice::getAdvertising()->stop();
-
-        // 3. 断开所有已有连接
-        if (pServer != nullptr)
-        {
-            // 获取当前所有客户端连接的句柄并强制断开
-            std::vector<uint16_t> peerIDs = pServer->getPeerDevices();
-            for (auto peerID : peerIDs)
-            {
-                pServer->disconnect(peerID);
-            }
-        }
-
-        // 4. 彻底注销 NimBLE 驱动并释放相关射频(RF)与内存资源
-        NimBLEDevice::deinit(true);
-
-        // 指针归零，防止野指针
-        pServer = nullptr;
-        pHID = nullptr;
-        pKeyboardInput = nullptr;
-        pMouseInput = nullptr;
-        pConsumerInput = nullptr;
-
-        DualSerial.println("[BLE] Service stopped");
+    _is_ble_enabled=!_is_ble_enabled;
+    if(_is_ble_enabled)NimBLEDevice::startAdvertising();
+    else{
+        _is_connected=false;NimBLEDevice::getAdvertising()->stop();
+        for(auto peer:pServer->getPeerDevices())pServer->disconnect(peer);
     }
-
+    // Keep HID objects alive: APP notifications and battery callbacks may still
+    // be in flight on the other core when the user switches Bluetooth off.
+    DualSerial.println(_is_ble_enabled?"[BLE] Enabled":"[BLE] Disabled");
     return _is_ble_enabled;
 }
 
@@ -393,3 +237,6 @@ bool ble_consumer_send(uint16_t usage_code)
 
     return true;
 }
+
+bool ble_is_enabled(void) { return _is_ble_enabled; }
+bool ble_is_connected(void) { return _is_connected; }

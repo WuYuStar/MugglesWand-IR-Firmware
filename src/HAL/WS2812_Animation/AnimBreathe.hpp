@@ -33,7 +33,7 @@ public:
 
 		// 用运行时长驱动正弦波相位
 		uint32_t elapsed = millis() - _startTime;
-		uint8_t phase = (elapsed * 256) / _periodMs;
+		uint8_t phase = ((elapsed % _periodMs) * 256) / _periodMs;
 
 		// quadwave8 产生 0→255→0 的平滑呼吸曲线
 		uint8_t wave = quadwave8(phase);

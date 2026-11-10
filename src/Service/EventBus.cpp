@@ -71,13 +71,13 @@ bool EventBus::subscribe(EventID eventId, QueueHandle_t queueHandle)
 //   阶段1（持锁）：将匹配的订阅者队列句柄复制到栈上快照数组
 //   阶段2（无锁）：遍历快照执行 xQueueSend，不阻塞其他任务操作订阅表
 // 这样避免了在持锁期间调用 xQueueSend（可能触发任务调度导致优先级反转）。
-bool EventBus::publish(EventID eventId, EventParam param1, EventParam param2)
+bool EventBus::publish(EventID eventId, EventParam param1, EventParam param2,uint32_t generation)
 {
     if (xMutex == NULL)
         return false;
 
     // 组装事件结构体
-    SystemEvent event = {eventId, param1, param2};
+    SystemEvent event = {eventId, param1, param2,generation};
 
     // === 阶段1：持锁快照匹配的订阅者 ===
     QueueHandle_t targets[MAX_SUBSCRIBERS];
@@ -104,7 +104,10 @@ bool EventBus::publish(EventID eventId, EventParam param1, EventParam param2)
     bool delivered = false;
     for (int i = 0; i < targetCount; i++)
     {
-        if (xQueueSend(targets[i], &event, 0) == pdPASS)
+        // Sampling must leave room for back/mode commands during flash writes.
+        if(eventId==EVENT_IMU_DATA_UPDATED && uxQueueSpacesAvailable(targets[i])<=4)continue;
+        const bool mode=eventId==EVENT_APP_SET_MODE||eventId==EVENT_IMU_SET_MUX||eventId==EVENT_IMU_RESET_MUX;
+        if (xQueueSend(targets[i], &event, mode?pdMS_TO_TICKS(20):0) == pdPASS)
         {
             delivered = true;
         }

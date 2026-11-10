@@ -1,6 +1,7 @@
 #include "Arduino.h"
 #include "imu/inv_imu_apex.h"
 #include "HAL_ICM42670P.h"
+#include "ImuI2c.h"
 #include "Service/DualPrint.h"
 
 static int i2c_write(inv_imu_serif *serif, uint8_t reg, const uint8_t *wbuffer, uint32_t wlen);
@@ -13,7 +14,7 @@ static const char *APEX_ACTIVITY[3] = {"IDLE", "WALK", "RUN"};
 #define I2C_DEFAULT_CLOCK 400000
 #define I2C_MAX_CLOCK 1000000
 #define ICM42670_I2C_ADDRESS 0x68
-#define ARDUINO_I2C_BUFFER_LENGTH 32
+static constexpr size_t kTransferBytes=2560;
 
 // This is used by the event callback (not object aware), declared static
 static inv_imu_sensor_event_t *event;
@@ -51,7 +52,8 @@ int ICM42670::begin()
 
     if (i2c != NULL)
     {
-        i2c->begin();
+        if(i2c->setBufferSize(kTransferBytes)!=kTransferBytes||!i2c->begin())return -1;
+        i2c->setTimeOut(100);
         i2c->setClock(clk_freq);
         icm_serif.serif_type = UI_I2C;
         icm_serif.read_reg = i2c_read;
@@ -64,8 +66,8 @@ int ICM42670::begin()
 
     /* Initialize serial interface between MCU and Icm43xxx */
     icm_serif.context = (void *)this;
-    icm_serif.max_read = 2560;  /* maximum number of bytes allowed per serial read */
-    icm_serif.max_write = 2560; /* maximum number of bytes allowed per serial write */
+    icm_serif.max_read = kTransferBytes;  /* maximum number of bytes allowed per serial read */
+    icm_serif.max_write = kTransferBytes-1; /* maximum number of bytes allowed per serial write */
     rc = inv_imu_init(&icm_driver, &icm_serif, NULL);
     if (rc != INV_ERROR_SUCCESS)
     {
@@ -297,34 +299,7 @@ static int i2c_write(inv_imu_serif *serif, uint8_t reg, const uint8_t *wbuffer, 
 static int i2c_read(inv_imu_serif *serif, uint8_t reg, uint8_t *rbuffer, uint32_t rlen)
 {
     ICM42670 *obj = (ICM42670 *)serif->context;
-    uint16_t offset = 0;
-
-    obj->i2c->beginTransmission(obj->i2c_address);
-    obj->i2c->write(reg);
-    if (obj->i2c->endTransmission(false) != 0)
-    {
-        return -1; // 寄存器地址写入失败(设备无响应)
-    }
-    while (offset < rlen)
-    {
-        uint16_t rx_bytes = 0;
-        if (offset != 0)
-            obj->i2c->beginTransmission(obj->i2c_address);
-        uint16_t length = ((rlen - offset) > ARDUINO_I2C_BUFFER_LENGTH) ? ARDUINO_I2C_BUFFER_LENGTH : (rlen - offset);
-        rx_bytes = obj->i2c->requestFrom(obj->i2c_address, length);
-        if (rx_bytes != length)
-        {
-            // 读取失败立即返回错误
-            return -1;
-        }
-        for (uint8_t i = 0; i < length; i++)
-        {
-            rbuffer[offset + i] = obj->i2c->read();
-        }
-        offset += length;
-        obj->i2c->endTransmission((offset == rlen));
-    }
-    return 0;
+    return rlen<=kTransferBytes ? readImuRegister(*obj->i2c,obj->i2c_address,reg,rbuffer,rlen) : -1;
 }
 
 // ================================内部函数=================================

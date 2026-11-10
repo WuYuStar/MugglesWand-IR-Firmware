@@ -1,5 +1,6 @@
 #pragma once
 #include "AnimationBase.hpp"
+#include <atomic>
 
 /**
  * @brief 长按关机衔接动画（overlay 类型灯效，播放完毕自销毁）
@@ -22,7 +23,7 @@ class AnimShutdown : public AnimationBase
 {
 private:
     CRGB _color;
-    bool *_done;        // 绑定外部"关机已确认"标志（动画播完时置 true）
+    std::atomic<bool> *_done;        // 绑定外部"关机已确认"标志（动画播完时置 true）
     uint16_t _startIndex; // 动画起始灯珠下标
     uint16_t _ledCount;   // 参与动画的灯珠数量
     uint32_t _totalMs;    // 动画总时长（毫秒）
@@ -38,7 +39,7 @@ public:
      * @param totalMs    动画总时长（毫秒）
      * @param brightness 汇聚阶段全带亮度（0~255，默认 20 与 AnimTap 对齐）
      */
-    AnimShutdown(CRGB color = CRGB::White, bool *done = nullptr,
+    AnimShutdown(CRGB color = CRGB::White, std::atomic<bool> *done = nullptr,
                  uint16_t startIndex = 0, uint16_t ledCount = 41, uint32_t totalMs = 500,
                  uint8_t brightness = 20)
         : _color(color),

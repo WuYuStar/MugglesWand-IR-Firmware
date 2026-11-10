@@ -5,6 +5,8 @@
 #include "Console.h"
 #include "DualPrint.h"
 #include "EventBus.h"
+#include "GestureBindings.h"
+#include "HomeAssistant.h"
 #include "APP/APP_POV.h" // pov 命令的图案清单由 APP 层输出
 
 #define CONSOLE_BUF_SIZE 64
@@ -15,22 +17,24 @@ static uint8_t rx_index = 0;
 /************ 显示帮助信息 ************/
 static void console_print_help()
 {
-    DualSerial.println("================= Wand Console =================");
-    DualSerial.println("help           - Show command list");
-    DualSerial.println("debug          - Enable debug mode(disable auto sleep)");
-    DualSerial.println("info           - Show system information");
-    DualSerial.println("reboot         - Restart device");
-    DualSerial.println("sleep          - Enter deep sleep mode");
-    DualSerial.println("shutdown       - Turn off the power");
-    DualSerial.println("ota            - Enter OTA mode");
-    DualSerial.println("ap             - Toggle AP service on/off");
-    DualSerial.println("espnow         - Toggle ESP-NOW service on/off");
-    DualSerial.println("ble            - Toggle BLE service on/off");
-    DualSerial.println("inference      - Switch IMU to inference mode (push data to gesture buffer)");
-    DualSerial.println("imu            - Switch IMU to real-time output mode (send data via AP&UART)");
-    DualSerial.println("stop           - Stop IMU task and cut off data output");
-    DualSerial.println("gesture <id>   - Simulate gesture detection event with specified ID");
-    DualSerial.println("pov [id] [rev] - Set POV pattern params");
+    DualSerial.println("========== 魔杖使用帮助 / Wand Console ==========");
+    DualSerial.println("新手推荐：连接魔杖 Wi-Fi，在浏览器打开 http://192.168.4.1");
+    DualSerial.println("help           - 查看帮助");
+    DualSerial.println("back           - 退出当前玩法，恢复挥杖识别");
+    DualSerial.println("info           - 查看设备与电池信息");
+    DualSerial.println("reboot         - 重新启动（网页会暂时断开）");
+    DualSerial.println("sleep          - 休眠，拿起可唤醒（网页会断开）");
+    DualSerial.println("shutdown       - 关机，单击底部按键开机");
+    DualSerial.println("ota            - 固件升级模式，随后打开 /update");
+    DualSerial.println("ap             - 切换 Wi-Fi 热点（关闭后网页会断开）");
+    DualSerial.println("espnow         - 切换红外配件通信");
+    DualSerial.println("ble            - 切换蓝牙开关");
+    DualSerial.println("inference      - 恢复挥杖识别，与 back 相同");
+    DualSerial.println("imu            - 采集动作数据（暂停施法）");
+    DualSerial.println("stop           - 暂停动作检测");
+    DualSerial.println("debug          - 保持唤醒，重启恢复自动休眠");
+    DualSerial.println("gesture <id>   - 体验功能：4鼠标 5照明 6音量 7光绘 8-11 HA 12-43 红外");
+    DualSerial.println("pov [id] [rev] - 查看或选择光绘图案，rev=1 反向播放");
 }
 
 /************ 串口命令解析 ************/
@@ -39,7 +43,8 @@ void console_parse(char *cmd)
     int32_t arg1 = 0, arg2 = 0;
 
     // 使用 strtok 分割字符串
-    char *token = strtok(cmd, " \r\n"); // 第一个单词是命令
+    char *context=nullptr;
+    char *token = strtok_r(cmd, " \r\n", &context); // 第一个单词是命令
     if (token == NULL)
         return;
 
@@ -84,25 +89,31 @@ void console_parse(char *cmd)
         EventBus::publish(EVENT_SYS_BLE);
     }
 
-    else if (!strcmp(token, "inference"))
+    else if (!strcmp(token, "inference") || !strcmp(token, "back"))
     {
-        EventBus::publish(EVENT_IMU_SET_MUX, 2);
+        if(!EventBus::publish(EVENT_APP_SET_MODE,2))DualSerial.println("[APP] Mode request busy, retry back");
     }
     else if (!strcmp(token, "imu"))
     {
-        EventBus::publish(EVENT_IMU_SET_MUX, 1);
+        EventBus::publish(EVENT_APP_SET_MODE, 1);
     }
     else if (!strcmp(token, "stop"))
     {
-        EventBus::publish(EVENT_IMU_RESET_MUX);
+        EventBus::publish(EVENT_APP_SET_MODE, -1);
     }
 
     else if (!strcmp(token, "gesture"))
     {
-        token = strtok(NULL, " \r\n"); // 第二个单词是参数1
+        token = strtok_r(nullptr, " \r\n", &context); // 第二个单词是参数1
         if (token != NULL)
         {
-            arg1 = atoi(token);
+            char *end = nullptr;
+            const long action = strtol(token, &end, 10);
+            if (end == token || *end || action < 0 || action > kLastGestureAction || gesture_action_retired(action)) {
+                DualSerial.println("Error: unsupported gesture action");
+                return;
+            }
+            arg1 = action;
             EventBus::publish(EVENT_GESTURE_DETECTED, arg1);
             DualSerial.printf("Gesture %d triggered\n", arg1);
         }
@@ -115,7 +126,7 @@ void console_parse(char *cmd)
     else if (!strcmp(token, "pov"))
     {
         // 无参数: 由 APP 层打印图案清单与用法
-        token = strtok(NULL, " \r\n");
+        token = strtok_r(nullptr, " \r\n", &context);
         if (token == NULL)
         {
             APP_POV_list();
@@ -126,7 +137,7 @@ void console_parse(char *cmd)
 
         // 索引越界检查与钳制由 APP 层 (APP_POV_set_params) 完成
         arg1 = atoi(token);
-        token = strtok(NULL, " \r\n");
+        token = strtok_r(nullptr, " \r\n", &context);
         arg2 = (token != NULL) ? atoi(token) : 0; // reverse, 默认 0
 
         EventBus::publish(EVENT_POV_SET, arg1, arg2);

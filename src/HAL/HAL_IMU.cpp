@@ -6,17 +6,20 @@
 #include "Config.h"
 #include "Model/gesture_buffer.h"
 #include <math.h>
+#include <atomic>
 #include "Service/AP.h"
 #include "Service/EventBus.h"
 #include "HAL/WS2812_Animation/AnimStatus.hpp"
 
 // 创建 ICM42670 实例（LSB 地址 = 0）
 ICM42670 IMU(Wire, 0, 400000);
-int8_t imu_data_mux = -1; // 1表示数据用于实时输出, 2表示数据压入推理缓冲区, -1表示imu未启动
+volatile int8_t imu_data_mux = -1; // 1表示数据用于实时输出, 2表示数据压入推理缓冲区, -1表示imu未启动
 TaskHandle_t icm42670p_task_handle = NULL;
 QueueHandle_t icm42670p_queue = NULL;
 SemaphoreHandle_t imu_sem = NULL;
 QueueSetHandle_t imu_queue_set = NULL;
+static std::atomic<uint32_t> sampleCount{0},lastSampleMs{0},recoveries{0};
+static uint32_t lastRestartMs=0,imuGeneration=0;
 
 // ======================== 有效手势状态机 ========================
 // 状态定义
@@ -45,7 +48,7 @@ typedef struct
 } Peak;
 
 // 状态机函数：输入当前点的gx, gy，返回当前状态, 若检测到过去100点是有效手势, 则返回一帧状态4
-int8_t detect_valid_gesture(float gx, float gy)
+int8_t detect_valid_gesture(float gx, float gy, bool reset=false)
 {
     // 状态机内部状态及计数器
     static int8_t state = STATE_INIT;
@@ -65,6 +68,11 @@ int8_t detect_valid_gesture(float gx, float gy)
     static int peak_cnt_x = 0;
     static Peak peaks_y[20];
     static int peak_cnt_y = 0;
+
+    if(reset){
+        state=STATE_INIT;still_cnt=p2_point_cnt=p3_point_cnt=peak_cnt_x=peak_cnt_y=0;
+        last_gx=last_gy=trend_gx=trend_gy=0;return STATE_INIT;
+    }
 
     switch (state)
     {
@@ -300,7 +308,9 @@ void event_cb(inv_imu_sensor_event_t *evt)
         float gz = gz_raw;
 
         // 1.Mahony 互补滤波实时更新姿态四元数 (保持对重力方向的追踪)
-        float norm = 1.0 / sqrtf(ax * ax + ay * ay + az * az);
+        const float acceleration=ax*ax+ay*ay+az*az;
+        if(!isfinite(acceleration)||acceleration<1e-12f||!isfinite(gx)||!isfinite(gy)||!isfinite(gz))return;
+        float norm = 1.0f / sqrtf(acceleration);
         ax *= norm;
         ay *= norm;
         az *= norm;
@@ -330,7 +340,9 @@ void event_cb(inv_imu_sensor_event_t *evt)
         q2 += (q0L * gy - q1L * gz + q3L * gx) * HALF_DT;
         q3 += (q0L * gz + q1L * gy - q2L * gx) * HALF_DT;
 
-        norm = 1.0 / sqrtf(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+        const float quaternion=q0*q0+q1*q1+q2*q2+q3*q3;
+        if(!isfinite(quaternion)||quaternion<1e-12f){q0=1;q1=q2=q3=exInt=eyInt=ezInt=0;return;}
+        norm=1.0f/sqrtf(quaternion);
         q0 *= norm;
         q1 *= norm;
         q2 *= norm;
@@ -364,6 +376,8 @@ void event_cb(inv_imu_sensor_event_t *evt)
             valid_gz = -gx_raw * sin_t + gz_raw * cos_t;
         }
 
+        if(!isfinite(valid_gx)||!isfinite(valid_gz))return;
+        lastSampleMs=millis();++sampleCount;
         current_sta = detect_valid_gesture(valid_gx, valid_gz); // 实时判断前100个点是否为有效数据
 
         static int8_t last_sta = -1; // 记录上一次的状态
@@ -389,15 +403,15 @@ void event_cb(inv_imu_sensor_event_t *evt)
             break;
         case 3:
             // 模拟鼠标模式：通过 EventBus 将 valid_gx/valid_gz 发送给 APP 层
-            EventBus::publish(EVENT_IMU_DATA_UPDATED, valid_gx, valid_gz);
+            EventBus::publish(EVENT_IMU_DATA_UPDATED, valid_gx, valid_gz,imuGeneration);
             break;
         case 4:
             // 模拟旋钮模式
-            EventBus::publish(EVENT_IMU_DATA_UPDATED, corrected_angle_deg);
+            EventBus::publish(EVENT_IMU_DATA_UPDATED, corrected_angle_deg,0,imuGeneration);
             break;
         case 5:
             // POV 光绘模式：发送剔除重力后的 X-Z 平面线性加速度 (单位 g)。
-            EventBus::publish(EVENT_IMU_DATA_UPDATED, ax_raw - vx, az_raw - vz);
+            EventBus::publish(EVENT_IMU_DATA_UPDATED, ax_raw - vx, az_raw - vz,imuGeneration);
             break;
         }
     }
@@ -421,13 +435,17 @@ static void icm42670p_task(void *pvParameters)
     while (1)
     {
         // 等待队列集中任一成员被激活（IMU数据就绪或事件队列有事件）
-        activated_member = xQueueSelectFromSet(imu_queue_set, portMAX_DELAY);
+        activated_member = xQueueSelectFromSet(imu_queue_set, pdMS_TO_TICKS(50));
         if (activated_member == imu_sem)
         {
             if (xSemaphoreTake(imu_sem, 0) == pdTRUE)
             {
-                IMU.getDataFromFifo(event_cb);
+                if(imu_data_mux!=-1)IMU.getDataFromFifo(event_cb);
             }
+        }
+        else if(!activated_member && imu_data_mux!=-1){
+            // Recover a missed FIFO edge (e.g. during an NVS flash write).
+            IMU.getDataFromFifo(event_cb);
         }
         else if (activated_member == icm42670p_queue)
         {
@@ -447,6 +465,9 @@ static void icm42670p_task(void *pvParameters)
                 }
             }
         }
+        if(imu_data_mux!=-1&&!HAL::ICM42670P_ready()&&millis()-lastRestartMs>=1000){
+            ++recoveries;HAL::ICM42670P_start(imu_data_mux);
+        }
     }
 }
 
@@ -455,7 +476,8 @@ void HAL::ICM42670P_stop()
     if (!icm42670p_task_handle)
         return;
     imu_data_mux = -1; // 标记为未启动状态
-    current_sta = -1;  // 重置状态机状态
+    current_sta = -1;
+    imuGeneration=resetGestureBuffer();detect_valid_gesture(0,0,true);
     IMU.enterSleepMode();
     DualSerial.println("[IMU] Stopped and entered sleep mode");
 }
@@ -468,33 +490,18 @@ void HAL::ICM42670P_start(int8_t data_mux)
         return; // 无效参数，拒绝启动
     }
 
-    if (imu_data_mux == data_mux)
-    {
-        DualSerial.printf("[IMU] Already in mode %d \n", data_mux);
-        return; // 已经在期望的模式下，无需重复启动
+    imuGeneration=resetGestureBuffer();
+    current_sta=detect_valid_gesture(0,0,true);
+    if(imu_data_mux==-1||!ICM42670P_ready()){
+        imu_data_mux=-1;lastRestartMs=millis();
+        q0=1;q1=q2=q3=exInt=eyInt=ezInt=0;
+        IMU.enterSleepMode();
+        if(IMU.enableDataFromFifoInterrupt(PIN_IMU_INT,imuDataReady)!=0){
+            DualSerial.println("[IMU] Start failed; retry back to recover");return;
+        }
     }
-
-    if (imu_data_mux == -1)
-    {
-        // 之前未启动，直接设置模式并启动IMU
-        imu_data_mux = data_mux;
-        // 初始化算法变量
-        q0 = 1.0f;
-        q1 = 0.0f;
-        q2 = 0.0f;
-        q3 = 0.0f;
-        exInt = 0.0f;
-        eyInt = 0.0f;
-        ezInt = 0.0f;
-        IMU.enableDataFromFifoInterrupt(PIN_IMU_INT, imuDataReady);
-        DualSerial.printf("[IMU] Started in mode %d\n", data_mux);
-    }
-    else
-    {
-        // 已经启动但模式不同，直接切换模式，无需重新配置IMU
-        imu_data_mux = data_mux;
-        DualSerial.printf("[IMU] Switched to mode %d\n", data_mux);
-    }
+    imu_data_mux=data_mux;
+    DualSerial.printf("[IMU] Mode %d\n",data_mux);
 }
 
 bool HAL::ICM42670P_init()
@@ -549,3 +556,12 @@ void HAL::enable_AnimStatus()
 {
     HAL::ws2812_set_overlay(new AnimStatus(current_sta));
 }
+
+int8_t HAL::ICM42670P_getDataMux(void) { return imu_data_mux; }
+
+bool HAL::ICM42670P_ready(){return imu_data_mux!=-1&&sampleCount&&millis()-lastSampleMs<500;}
+uint32_t HAL::ICM42670P_samples(){return sampleCount;}
+uint32_t HAL::ICM42670P_sampleAge(){return sampleCount?millis()-lastSampleMs:UINT32_MAX;}
+uint32_t HAL::ICM42670P_recoveries(){return recoveries;}
+
+bool HAL::ICM42670P_idle(){return ICM42670P_ready()&&imu_data_mux==2&&current_sta==STATE_STILL_DETECTED;}

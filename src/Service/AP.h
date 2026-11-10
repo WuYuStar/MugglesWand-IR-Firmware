@@ -12,4 +12,6 @@ void ap_print(const char *buffer, size_t length);
 // ESP-NOW 控制接口
 void espnow_toggle(void);
 bool espnow_is_running(void);
+bool espnow_channel_conflict();
 bool espnow_send_data(const uint8_t *data, size_t len);
+bool espnow_send_to(const uint8_t mac[6], const uint8_t *data, size_t len);

@@ -25,3 +25,7 @@ void APP_POV_on_imu_data(float linearX, float linearZ);
 
 // @brief 打印内置图案清单
 void APP_POV_list(void);
+
+// Metadata access without duplicating the large pattern arrays in the web module.
+uint8_t APP_POV_pattern_count(void);
+const char *APP_POV_pattern_name(uint8_t index);

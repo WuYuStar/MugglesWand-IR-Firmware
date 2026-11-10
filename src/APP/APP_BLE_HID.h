@@ -2,10 +2,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-bool APP_ble_keyboard_press_up(void);
-
-bool APP_ble_keyboard_press_down(void);
-
 // ==================== 鼠标模式 ====================
 
 /// @brief 进入鼠标模式：点亮蓝色指示灯并切换 IMU 数据流为 mux 3（角速度）

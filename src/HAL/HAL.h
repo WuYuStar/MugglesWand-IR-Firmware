@@ -14,6 +14,12 @@ namespace HAL
     bool ICM42670P_init(void);
     void ICM42670P_start(int8_t data_mux);
     void ICM42670P_stop(void);
+    int8_t ICM42670P_getDataMux(void);
+    bool ICM42670P_ready();
+    bool ICM42670P_idle();
+    uint32_t ICM42670P_samples();
+    uint32_t ICM42670P_sampleAge();
+    uint32_t ICM42670P_recoveries();
     void enable_AnimStatus();
 
     // MAX17048

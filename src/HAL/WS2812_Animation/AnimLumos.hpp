@@ -1,18 +1,20 @@
 #pragma once
 #include "AnimationBase.hpp"
+#include <atomic>
 
 /**
  * @brief Lumos点灯咒（overlay 类型灯效，不自动销毁）
  *
  * 以 _baseColor 颜色点亮最后一颗灯珠，模拟魔法杖发光效果。
  * 该动画会在稳定期和闪烁期之间随机切换，闪烁期会随机生成亮度抖动，稳定期则保持原色的最大亮度，模拟荧光随机闪烁效果。
- * 当动画被 delete 时，会自动将绑定的 APP 层状态变量 *_appStateBind 刷回 false，确保上层状态同步。
+ * 动画销毁时，仅在令牌仍匹配时清除照明状态。
  */
 class AnimLumos : public AnimationBase
 {
 private:
     CRGB _baseColor;
-    bool *_appStateBind; // 保存指向 APP 层状态变量的指针
+    std::atomic<uint32_t> *_state;
+    uint32_t _token;
 
     // --- 状态机控制变量 ---
     bool _isFlickering;       // 当前是否处于“闪烁期”
@@ -44,18 +46,15 @@ private:
 public:
     /**
      * @param color 颜色
-     * @param appStateBind 绑定 APP 层的 is_lumos_on 变量地址
+     * @param state APP层状态；token用于防止旧动画覆盖新状态
      */
-    AnimLumos(CRGB color, bool *appStateBind = nullptr)
-        : _baseColor(color), _appStateBind(appStateBind) {}
+    AnimLumos(CRGB color,std::atomic<uint32_t> *state=nullptr,uint32_t token=0)
+        : _baseColor(color),_state(state),_token(token) {}
 
     // 析构函数（当它被 delete 时，会自动执行这里）
     ~AnimLumos() override
     {
-        if (_appStateBind != nullptr)
-        {
-            *_appStateBind = false; // 自动将上层的 is_lumos_on 刷回 false！
-        }
+        if(_state){uint32_t expected=_token;_state->compare_exchange_strong(expected,_token&~1u);}
     }
 
     void init() override

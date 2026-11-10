@@ -5,6 +5,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <atomic>
 
 // 引入动画基类
 #include "WS2812_Animation/AnimationBase.hpp"
@@ -33,6 +34,15 @@ typedef struct
 } layer_cmd_t;
 
 static QueueHandle_t layer_queue = NULL;
+static SemaphoreHandle_t layerMutex=nullptr,stopped=nullptr;
+static std::atomic<bool> stopping{false};
+static void clear_layers(){
+    delete bg_layer;delete fx_layer;delete overlay_layer;
+    bg_layer=fx_layer=overlay_layer=nullptr;
+    layer_cmd_t cmd;
+    while(xQueueReceive(layer_queue,&cmd,0)==pdTRUE)delete cmd.anim_ptr;
+    FastLED.clear(true);pinMode(PIN_WS2812_EN,INPUT);
+}
 
 // ==================== 核心渲染任务循环 ====================
 static void ws2812_task(void *pvParameters)
@@ -47,6 +57,9 @@ static void ws2812_task(void *pvParameters)
 
     for (;;)
     {
+        if(stopping.load()){
+            clear_layers();xSemaphoreGive(stopped);vTaskDelete(nullptr);return;
+        }
         // 1. 检查是否有上层 APP / Service 发来的图层切换命令
         layer_cmd_t cmd;
         while (xQueueReceive(layer_queue, &cmd, 0) == pdTRUE)
@@ -158,8 +171,9 @@ void HAL::ws2812_init(void)
     FastLED.clear();
 
     // 创建命令通信队列 (深度为8，防突发堆积)
+    layerMutex=xSemaphoreCreateMutex();stopped=xSemaphoreCreateBinary();
     layer_queue = xQueueCreate(8, sizeof(layer_cmd_t));
-    if (layer_queue == NULL)
+    if (!layer_queue||!layerMutex||!stopped)
         return;
 
     // 创建渲染核心任务
@@ -176,84 +190,21 @@ void HAL::ws2812_init(void)
 // 停止引擎并清理内存
 void HAL::ws2812_stop(void)
 {
-    if (ws2812_task_handle != NULL)
-    {
-        vTaskDelete(ws2812_task_handle);
-        ws2812_task_handle = NULL;
-    }
-
-    // 清理三大图层残余内存
-    if (bg_layer)
-    {
-        delete bg_layer;
-        bg_layer = nullptr;
-    }
-    if (fx_layer)
-    {
-        delete fx_layer;
-        fx_layer = nullptr;
-    }
-    if (overlay_layer)
-    {
-        delete overlay_layer;
-        overlay_layer = nullptr;
-    }
-
-    if (layer_queue)
-    {
-        vQueueDelete(layer_queue);
-        layer_queue = NULL;
-    }
-
-    FastLED.clear();
-
-    // 关闭灯带电源
-    pinMode(PIN_WS2812_EN, INPUT);
+    if(!layerMutex||xSemaphoreTake(layerMutex,pdMS_TO_TICKS(100))!=pdTRUE)return;
+    stopping.store(true);
+    if(ws2812_task_handle&&xSemaphoreTake(stopped,pdMS_TO_TICKS(1000))==pdTRUE)
+        ws2812_task_handle=nullptr;
+    // Queue/layer ownership stays with the renderer until it acknowledges stop.
+    xSemaphoreGive(layerMutex);
 }
 
-// ----------------- 图层异步推送 API -----------------
-
-// 设置环境底色背景层
-void HAL::ws2812_set_background(AnimationBase *anim)
-{
-    if (layer_queue == NULL)
-    {
-        delete anim;
-        return;
-    }
-    layer_cmd_t cmd = {CMD_SET_BG, anim};
-    if (xQueueSend(layer_queue, &cmd, 0) != pdTRUE)
-    {
-        delete anim; // 队列满安全自毁
-    }
+static void set_layer(layer_cmd_type_t type,AnimationBase *anim){
+    if(!layerMutex||xSemaphoreTake(layerMutex,pdMS_TO_TICKS(10))!=pdTRUE){delete anim;return;}
+    layer_cmd_t command{type,anim};
+    bool accepted=!stopping.load()&&ws2812_task_handle&&layer_queue&&xQueueSend(layer_queue,&command,0)==pdTRUE;
+    xSemaphoreGive(layerMutex);
+    if(!accepted)delete anim;
 }
-
-// 突发插播单次魔法特效应调用此接口
-void HAL::ws2812_start_fx(AnimationBase *anim)
-{
-    if (layer_queue == NULL)
-    {
-        delete anim;
-        return;
-    }
-    layer_cmd_t cmd = {CMD_START_FX, anim};
-    if (xQueueSend(layer_queue, &cmd, 0) != pdTRUE)
-    {
-        delete anim;
-    }
-}
-
-// 设置不可被覆盖的手势状态顶层
-void HAL::ws2812_set_overlay(AnimationBase *anim)
-{
-    if (layer_queue == NULL)
-    {
-        delete anim;
-        return;
-    }
-    layer_cmd_t cmd = {CMD_SET_OVERLAY, anim};
-    if (xQueueSend(layer_queue, &cmd, 0) != pdTRUE)
-    {
-        delete anim;
-    }
-}
+void HAL::ws2812_set_background(AnimationBase *anim){set_layer(CMD_SET_BG,anim);}
+void HAL::ws2812_start_fx(AnimationBase *anim){set_layer(CMD_START_FX,anim);}
+void HAL::ws2812_set_overlay(AnimationBase *anim){set_layer(CMD_SET_OVERLAY,anim);}

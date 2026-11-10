@@ -4,6 +4,10 @@
 #include "Service/EventBus.h"
 #include "Service/Console.h"
 #include "Service/Service.h"
+#include "Service/GestureBindings.h"
+#include "Service/IrLink.h"
+#include "Service/HomeAssistant.h"
+#include "Model/ModelStore.h"
 
 #include "HAL/HAL.h"
 
@@ -38,17 +42,21 @@ void setup()
 {
   // ---------------系统初始化---------------
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0); // A disconnected USB monitor must not stall sampling.
 
   DualSerial.println("[System] Initializing...");
 
   // 系统服务初始化
   EventBus::init();
+  ModelStore::init();
+  ha_init();
   console_init();
   service_init();
 
   // 模型载入
   inference_init();
-  inference_start();
+  gesture_bindings_init();
+  ir_link_init();
 
   // 硬件初始化
   HAL::power_init();
@@ -63,26 +71,12 @@ void setup()
   APP_init();
 
   // 启动手势推理、BLE、WiFi热点
-  EventBus::publish(EVENT_IMU_SET_MUX, 2);
-  EventBus::publish(EVENT_SYS_BLE);
+  if(imu_ok){inference_start();EventBus::publish(EVENT_IMU_SET_MUX,2);}
   EventBus::publish(EVENT_SYS_AP);
+  EventBus::publish(EVENT_SYS_BLE);
 
-  // 检查IMU和电池状态，如果初始化失败则重启
-  if (!imu_ok || !batt_ok)
-  {
-    for (int i = 5; i > 0; i--)
-    {
-      if (!imu_ok)
-        DualSerial.printf("[System] FAIL: ICM42670P (IMU) init failed, Restart in %ds\n", i);
-
-      if (!batt_ok)
-        DualSerial.printf("[System] FAIL: MAX17048 (battery gauge) init failed, Restart in %ds\n", i);
-
-      delay(1000);
-    }
-    DualSerial.println("[System] Restarting...");
-    ESP.restart();
-  }
+  if(!imu_ok)DualSerial.println("[System] IMU unavailable; Wi-Fi remains available for recovery");
+  if(!batt_ok)DualSerial.println("[System] Battery gauge unavailable; gesture functions remain available");
 
   DualSerial.println("[System] Initialization complete");
 }

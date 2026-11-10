@@ -11,6 +11,7 @@ struct GestureBuffer
     float history_buffer[kWindowSize][kNumFeatures]; // 环形/滚动缓冲区，永远保存最新的100个点
     int write_idx;                                   // 下一个写入的位置
     int total_samples;                               // 总采样数，用于判断是否填满过100个点
+    uint32_t generation;
     bool data_ready;                                 // 推理数据是否准备就绪
 
     // 专供推理任务读取的线性缓冲区（100个点连续排列）
@@ -30,4 +31,7 @@ void addSample(float arg1, float arg2, bool en);
 
 // 获取准备好的缓冲区（推理任务调用）
 // 返回 true 表示有数据，buffer_out 指向连续的 100 个点数据
-bool acquireBuffer(float **buffer_out);
+uint32_t resetGestureBuffer();
+bool acquireBuffer(float *out,uint32_t &generation);
+bool gestureBufferCurrent(uint32_t generation);
+bool gestureBufferReady();
