@@ -1,23 +1,26 @@
-# MugglesWand-IR 固件源码
+# MugglesWand-IR 魔杖固件
 
-此仓库是 [MugglesWand-IR](https://github.com/WuYuStar/MugglesWand-IR) 的魔杖固件源码，基于 [zoushui 的 MugglesWand-src](https://github.com/zou-shui/MugglesWand-src) 扩展。原作者版权和 MIT 许可保留在 [LICENSE](LICENSE)。红外配件的 ESP32-C3 固件位于主项目的 `2.Firmware/IRLearner-C3`。
+ESP32-S3 魔杖固件源码，属于 [MugglesWand-IR 项目](https://github.com/WuYuStar/MugglesWand-IR)，基于 [zoushui 的 MugglesWand-src](https://github.com/zou-shui/MugglesWand-src) 扩展。魔杖识别挥杖动作，提供照明、空中光绘、蓝牙鼠标和音量控制；网页还能设置手势与灯效、配置 Home Assistant，并通过 ESP-NOW 连接红外配件。
 
-硬件平台：ESP32-S3（Arduino 框架）。构建系统：PlatformIO。如要自行修改源码，请先在VSCode安装插件PlatformIO。PlatformIO会自动识别工程并下载依赖库，随后即可编译工程。
+## 使用魔杖
 
-## 工程简介
+开机后连接 Wi-Fi `Muggles' Wand`，在浏览器打开 `http://192.168.4.1`。「发送指令」可直接体验功能；「配置 → 手势与灯效」可修改动作绑定。使用红外配件时，在「配置 → 红外配件」搜索并连接 ESP32-C3，学习信号后即可重放或绑定到手势。C3 固件和接线说明在[主项目](https://github.com/WuYuStar/MugglesWand-IR/tree/main/2.Firmware/IRLearner-C3)。
 
-源码按 `src/` 目录分为四层：
+自定义手势可用[电脑端训练工具](https://github.com/WuYuStar/MugglesWand-IR/tree/main/3.Software/4.GestureTrainer)录制、训练和上传 `.wandmodel`；日常更换模型不需要重新编译本固件。
 
-- **HAL** — 硬件抽象层：WS2812 灯带、ICM42670P 六轴 IMU、MAX17048 电池电量计、电源与按键管理
-- **Model** — TensorFlow Lite 手势识别：缓存IMU数据，在手势有效时对数据进行推理并发布推理结果。
-- **Service** — 系统服务：EventBus 事件总线、Console 串口指令、BLE（NimBLE）、AP 热点 + Web 管理页、OTA 升级、低功耗睡眠
-- **APP** — 用户应用层：将手势映射为具体功能，如 Lumos、BLE HID（鼠标/音量）、ESP-NOW 信号联动、POV 光绘。可自行编写更多APP模块实现更多创意功能。
+## 源码与构建
 
-各层通过 EventBus 解耦：HAL 上报 IMU/按键事件，Model 发布手势推理结果，APP 监听并执行相应动作。
+- `src/HAL/`：IMU、灯带、电量、电源和按键。
+- `src/Model/`：手势推理与模型管理。
+- `src/Service/`：网页、网络、蓝牙、升级和系统服务。
+- `src/APP/`：照明、光绘、蓝牙 HID、ESP-NOW 和手势功能映射。
 
-> 另外，在Config.h中可以修改AP、BLE名称。
+项目使用 PlatformIO 和 Arduino 框架。在 WSL 中安装 PlatformIO 后，于仓库根目录运行：
 
-## OTA
+```sh
+pio run -e esp32-s3-fh4r2
+```
 
-固件支持以OTA方式更新，在Console中发送ota指令使其进入OTA模式，连接魔杖热点并访问[192.168.4.1/update](http://192.168.4.1/update)即可上传固件进行更新。
-编译好的固件在`.pio/build/esp32-s3-fh4r2/firmware.bin`
+输出应用镜像位于 `.pio/build/esp32-s3-fh4r2/firmware.bin`。魔杖网页「设备 → 系统升级」可上传匹配的应用镜像。板型、内存和依赖版本以 [`platformio.ini`](platformio.ini) 为准；新设备首次完整烧录需要对应的引导程序和分区表。
+
+原作者版权和 MIT 许可保留在 [LICENSE](LICENSE)。
