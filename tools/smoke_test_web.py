@@ -95,14 +95,15 @@ with sync_playwright() as p:
     page.get_by_role('link', name='红外配件').click()
     page.locator('#ir-pair').click()
     page.get_by_text('已连接到 80:53:E0:05:EB:C8').wait_for()
+    page.locator('#ir-settings').screenshot(path=str(args.output / 'ir-settings.png'))
     page.get_by_role('link', name='发送指令', exact=True).click()
+    page.screenshot(path=str(args.output / 'product-control.png'), full_page=True)
     page.locator('#ir-command-send').click()
     assert commands[-1] == 'web:ir 66 0'
     page.get_by_role('link', name='配置', exact=True).click()
     page.get_by_role('link', name='红外配件').click()
     page.locator('#ir-signals .ir-slot').first.wait_for()
     assert page.locator('#ir-signals .ir-slot').count() == 1
-    page.locator('#ir-settings').screenshot(path=str(args.output / 'ir-settings.png'))
     page.locator('#ir-signals .ir-slot').first.get_by_role('button', name='重放').click()
     assert commands[-1] == 'web:ir 66 0'
     page.locator('#ir-add').click()
@@ -124,7 +125,7 @@ with sync_playwright() as p:
     page.get_by_role('link', name='手势与灯效').click()
     assert page.locator('.binding-action-field select').first.locator('option[value="13"]').text_content() == '空调开关'
     page.get_by_role('link', name='返回配置').click()
-    assert page.get_by_role('link', name='更新手势模型').is_visible()
+    page.get_by_role('link', name='更新手势模型').wait_for(state='visible')
     page.get_by_role('link', name='Home Assistant', exact=False).click()
     page.locator('#ha-settings').wait_for()
     assert page.locator('#ha-fields').is_hidden()

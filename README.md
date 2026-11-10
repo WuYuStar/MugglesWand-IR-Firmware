@@ -1,6 +1,8 @@
-# Muggles' Wand - src
+# MugglesWand-IR 固件源码
 
-此仓库是[Muggles' Wand](https://github.com/zou-shui/MugglesWand)项目的**固件源码**子仓库。硬件平台：ESP32-S3（Arduino 框架）。构建系统：PlatformIO。如要自行修改源码，请先在VSCode安装插件PlatformIO。PlatformIO会自动识别工程并下载依赖库，随后即可编译工程。
+此仓库是 [MugglesWand-IR](https://github.com/WuYuStar/MugglesWand-IR) 的魔杖固件源码，基于 [zoushui 的 MugglesWand-src](https://github.com/zou-shui/MugglesWand-src) 扩展。原作者版权和 MIT 许可保留在 [LICENSE](LICENSE)。红外配件的 ESP32-C3 固件位于主项目的 `2.Firmware/IRLearner-C3`。
+
+硬件平台：ESP32-S3（Arduino 框架）。构建系统：PlatformIO。如要自行修改源码，请先在VSCode安装插件PlatformIO。PlatformIO会自动识别工程并下载依赖库，随后即可编译工程。
 
 ## 工程简介
 
