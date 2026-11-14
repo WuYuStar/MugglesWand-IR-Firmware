@@ -62,7 +62,7 @@ void setup()
   HAL::power_init();
   HAL::ws2812_init();
   // 开机/唤醒动画：中心向两端扩散后整体熄灭，播完自销毁
-  HAL::ws2812_start_fx(new AnimBootup());
+  HAL::ws2812_start_fx(new AnimBootup(CRGB::White, 0, HAL::ws2812_count()));
   bool imu_ok = HAL::ICM42670P_init();
   bool batt_ok = HAL::MAX17048_init();
   HAL::button_init();

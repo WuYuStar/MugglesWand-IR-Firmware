@@ -41,7 +41,7 @@ static void button_task(void *param)
                 pressStart = millis();
                 s_button_pressed = true;
                 HAL::ws2812_start_fx(new AnimTap(s_button_pressed, CRGB::White,
-                                                 0, WS2812_LED_COUNT, TURN_OFF_TIME));
+                                                 0, HAL::ws2812_count(), TURN_OFF_TIME));
             }
 
             // 长按触发
@@ -55,7 +55,7 @@ static void button_task(void *param)
                 HAL::ws2812_set_background(nullptr);
                 // overlay 层强制覆盖所有动效（含 LED0 状态灯），播放关机衔接动画
                 HAL::ws2812_set_overlay(new AnimShutdown(CRGB::White, &s_shutdown_done,
-                                                         0, WS2812_LED_COUNT, SHUTDOWN_ANIM_MS));
+                                                         0, HAL::ws2812_count(), SHUTDOWN_ANIM_MS));
                 // 等待动画播完（收尾帧置位 s_shutdown_done），超时兜底后发布关机命令
                 uint32_t waitDeadline = millis() + SHUTDOWN_ANIM_MS + 500;
                 while (!s_shutdown_done && static_cast<int32_t>(millis()-waitDeadline)<0)

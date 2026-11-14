@@ -45,7 +45,7 @@ public:
      * @param brightness 点亮亮度（0~255，默认 20 避免刺眼）
      */
     AnimTap(const volatile bool &isPressed, CRGB color = CRGB::White,
-            uint16_t startIndex = 0, uint16_t ledCount = 41, uint32_t totalMs = 1000,
+            uint16_t startIndex = 0, uint16_t ledCount = 39, uint32_t totalMs = 1000,
             float drainSpeed = 1.5f, uint8_t brightness = 20)
         : _isPressed(isPressed),
           _color(color),

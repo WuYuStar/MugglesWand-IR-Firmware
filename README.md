@@ -6,6 +6,8 @@ ESP32-S3 魔杖固件源码，属于 [MugglesWand-IR 项目](https://github.com/
 
 开机后连接 Wi-Fi `Muggles' Wand`，在浏览器打开 `http://192.168.4.1`。「发送指令」可直接体验功能；「配置 → 手势与灯效」可修改动作绑定。使用红外配件时，在「配置 → 红外配件」搜索并连接 ESP32-C3，学习信号后即可重放或绑定到手势。C3 固件和接线说明在[主项目](https://github.com/WuYuStar/MugglesWand-IR/tree/main/2.Firmware/IRLearner-C3)。
 
+「配置 → 灯珠数量」可选择 35～45 颗，默认 39 颗。保存后立即作用于照明、灯效、开关机动画和空中光绘，断电后保留。
+
 自定义手势可用[电脑端训练工具](https://github.com/WuYuStar/MugglesWand-IR/tree/main/3.Software/4.GestureTrainer)录制、训练和上传 `.wandmodel`；日常更换模型不需要重新编译本固件。
 
 ## 源码与构建

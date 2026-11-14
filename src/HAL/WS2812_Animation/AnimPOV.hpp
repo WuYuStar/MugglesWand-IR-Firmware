@@ -6,7 +6,7 @@ typedef struct
     const char *name;  // 图案名称 (控制台帮助列表用)
     const CRGB *data;  // 指向 2D const 数组首元素
     uint16_t rows;     // 行数 (= n, 决定播放时长: rows*10ms)
-    uint16_t width;    // 列数 (= WS2812_LED_COUNT)
+    uint16_t width;    // 图案原始列数，可与灯带长度不同
 } POVPatternInfo;
 
 /**
@@ -60,21 +60,15 @@ public:
         // 计算源行（reverse = 从最后一行倒播，适配反向挥舞时不倒立）
         uint16_t srcRow = _reverse ? (_pattern->rows - 1 - _rowIndex) : _rowIndex;
         const CRGB *src = &_pattern->data[srcRow * _pattern->width];
-        uint16_t n = (_pattern->width < numLeds) ? _pattern->width : numLeds;
-
-        if (_brightness >= 255)
+        if (_pattern->width == 0) { _isFinished = true; return; }
+        // 把图案的原始列均匀映射到当前灯带长度，避免 35～45 颗时裁掉末端或留下黑尾。
+        for (uint16_t i = 0; i < numLeds; i++)
         {
-            // 整行直接覆盖（overlay 强制覆盖语义），每 tick 拷 n * sizeof(CRGB) 字节
-            memcpy(leds, src, n * sizeof(CRGB));
-        }
-        else
-        {
-            for (uint16_t i = 0; i < n; i++)
-            {
-                CRGB c = src[i];
-                c.nscale8(_brightness);
-                leds[i] = c;
-            }
+            const uint16_t source = numLeds > 1
+                ? (i * (_pattern->width - 1) + (numLeds - 1) / 2) / (numLeds - 1) : 0;
+            CRGB c = src[source];
+            if (_brightness < 255) c.nscale8(_brightness);
+            leds[i] = c;
         }
 
         _rowIndex++; // 每 tick 推进 1 行（频率 = 1000 / 帧间隔 ms）

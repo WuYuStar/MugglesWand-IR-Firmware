@@ -14,9 +14,9 @@ args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 source = Path(__file__).resolve().parents[1] / 'src/Service/WebPage.h'
 html = source.read_text().split('R"raw(\n', 1)[1].rsplit(')raw";', 1)[0]
-status = dict(type='status', version='6.2-rc3', ssid="Muggles' Wand", password='12345678',
+status = dict(type='status', version='6.3-rc1', ssid="Muggles' Wand", password='12345678',
               bleName="Muggles' Wand", mode=2, bleEnabled=True, bleConnected=False,
-              charging=False, receiver=True, patterns=['MugglesWand', 'Star', 'Rainbow'],
+              charging=False, receiver=True, ledCount=39, patterns=['MugglesWand', 'Star', 'Rainbow'],
               gestureProfile='legacy-v1', gestureProfileTitle='原版手势模型',
               gestureLabels=['关灯', '开灯', '向上', '向下', '鼠标', '照明魔法', '音量', '光绘'],
               bindings=[-1,-1,-1,-1,4,5,6,7], gestureEffects=[-1]*8, lightEffects=[],
@@ -38,6 +38,12 @@ def device(socket):
             return
         commands.append(command)
         if command == 'web:status':
+            socket.send(json.dumps(status))
+        elif command.startswith('web:led-count '):
+            count = int(command.removeprefix('web:led-count '))
+            assert 35 <= count <= 45
+            status['ledCount'] = count
+            socket.send(json.dumps(dict(type='ledCount', ok=True, count=count)))
             socket.send(json.dumps(status))
         elif command.startswith('web:ir-pair '):
             assert command == 'web:ir-pair 80:53:E0:05:EB:C8'
@@ -90,6 +96,21 @@ with sync_playwright() as p:
     assert page.get_by_role('heading', name='红外配件').is_visible()
     page.get_by_role('link', name='配置', exact=True).click()
     page.locator('#settings').wait_for()
+    assert page.locator('#led-count').input_value() == '39'
+    assert page.locator('#led-save').is_disabled()
+    page.locator('#led-count').select_option('45')
+    assert page.locator('#led-save').is_enabled()
+    socket_count = len(commands)
+    sockets[-1].send(json.dumps(status))
+    assert page.locator('#led-count').input_value() == '45'
+    page.locator('#led-save').click()
+    assert 'web:led-count 45' in commands[socket_count:]
+    page.get_by_text('已保存，立即生效').wait_for()
+    assert page.locator('#led-save').is_disabled()
+    page.locator('#led-count').select_option('35')
+    page.locator('#led-save').click()
+    page.wait_for_function("document.querySelector('#led-count').value === '35' && document.querySelector('#led-save').disabled")
+    assert status['ledCount'] == 35
     page.locator('#settings').screenshot(path=str(args.output / 'readme-settings.png'))
     assert page.locator('#control').is_hidden()
     assert page.get_by_role('link', name='手势与灯效').is_visible()

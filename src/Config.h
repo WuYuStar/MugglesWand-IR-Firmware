@@ -2,7 +2,7 @@
 
 // Project Information
 #define PROJECT_NAME "Muggles' Wand" // 项目名称
-#define FIRMWARE_VER "6.2-rc3"      // Expandable gesture bindings, 39 LEDs
+#define FIRMWARE_VER "6.3-rc1"      // Configurable LED count
 #define BUILD_TIME __DATE__ "  " __TIME__
 
 // AP
@@ -20,7 +20,9 @@
 // WS2812
 #define PIN_WS2812 38       // WS2812 数据引脚
 #define PIN_WS2812_EN 39    // WS2812 使能引脚
-#define WS2812_LED_COUNT 39 // 用户实际安装的 WS2812 灯珠数量
+#define WS2812_LED_DEFAULT_COUNT 39
+#define WS2812_LED_MIN_COUNT 35
+#define WS2812_LED_MAX_COUNT 45
 
 // 电池计量
 #define PIN_BATT_GAUGE_SCL 17 // 电池电量检测SCL引脚(外部上拉)

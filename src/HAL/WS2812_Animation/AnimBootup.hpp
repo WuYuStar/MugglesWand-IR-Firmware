@@ -39,7 +39,7 @@ public:
      * @param decaySpeed     亮度衰减速度（0~1）
      */
     AnimBootup(CRGB color = CRGB::White,
-               uint16_t startIndex = 0, uint16_t ledCount = 41,
+               uint16_t startIndex = 0, uint16_t ledCount = 39,
                uint32_t totalMs = 750,
                uint8_t peakBrightness = 20,
                float decaySpeed = 0.9f)
@@ -95,7 +95,8 @@ public:
             for (int16_t i = -radius; i <= radius; i++)
             {
                 int16_t idx = (int16_t)_center + i;
-                leds[idx] += lit;
+                if (idx >= _startIndex && idx < _startIndex + _ledCount)
+                    leds[idx] += lit;
             }
         }
         else

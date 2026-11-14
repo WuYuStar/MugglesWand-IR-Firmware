@@ -87,6 +87,7 @@ static void sendWebStatus(AsyncWebSocketClient *client)
     message += ble_is_connected() ? "true" : "false";
     message += ",\"charging\":";
     message += HAL::power_getChargeStatus() ? "true" : "false";
+    message += ",\"ledCount\":" + String(HAL::ws2812_count());
     message += ",\"receiver\":";
     message += espnow_is_running() ? "true" : "false";
     message += ",\"receiverConflict\":";
@@ -186,6 +187,15 @@ static void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
             if (strcmp(cmd, "web:status") == 0)
                 sendWebStatus(client);
             else if(ModelStore::busy())client->text("{\"type\":\"busy\",\"message\":\"正在更新模型，请稍后再操作\"}");
+            else if (strncmp(cmd, "web:led-count ", 14) == 0) {
+                const bool parsed = len == 16 && cmd[14] >= '0' && cmd[14] <= '9' && cmd[15] >= '0' && cmd[15] <= '9';
+                const uint8_t count = parsed ? (cmd[14] - '0') * 10 + cmd[15] - '0' : 0;
+                const bool valid = count >= WS2812_LED_MIN_COUNT && count <= WS2812_LED_MAX_COUNT;
+                const bool saved = valid && HAL::ws2812_set_count(count);
+                client->text(String("{\"type\":\"ledCount\",\"ok\":") + (saved ? "true" : "false") +
+                             ",\"count\":" + String(HAL::ws2812_count()) + "}");
+                sendWebStatus(client);
+            }
             else if (strncmp(cmd, "web:ir-pair ", 12) == 0) {
                 bool ok = ir_link_pair(cmd + 12);
                 client->text(String("{\"type\":\"irPair\",\"ok\":") + (ok ? "true" : "false") + "}");

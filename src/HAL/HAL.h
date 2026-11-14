@@ -37,6 +37,8 @@ namespace HAL
     // WS2812 统一动画管理引擎接口
     void ws2812_init(void);
     void ws2812_stop(void);
+    uint8_t ws2812_count(void);
+    bool ws2812_set_count(uint8_t count);
 
     // 基于现代图层架构的异步注入接口
     void ws2812_set_background(AnimationBase *anim);

@@ -40,7 +40,7 @@ public:
      * @param brightness 汇聚阶段全带亮度（0~255，默认 20 与 AnimTap 对齐）
      */
     AnimShutdown(CRGB color = CRGB::White, std::atomic<bool> *done = nullptr,
-                 uint16_t startIndex = 0, uint16_t ledCount = 41, uint32_t totalMs = 500,
+                 uint16_t startIndex = 0, uint16_t ledCount = 39, uint32_t totalMs = 500,
                  uint8_t brightness = 20)
         : _color(color),
           _done(done),

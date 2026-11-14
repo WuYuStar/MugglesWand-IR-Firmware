@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include "Config.h"
 #include <FastLED.h>
+#include <Preferences.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
@@ -11,7 +12,8 @@
 #include "WS2812_Animation/AnimationBase.hpp"
 
 // ==================== 静态硬件资源 ====================
-static CRGB leds[WS2812_LED_COUNT];
+static CRGB leds[WS2812_LED_MAX_COUNT];
+static std::atomic<uint8_t> active_led_count{WS2812_LED_DEFAULT_COUNT};
 static TaskHandle_t ws2812_task_handle = NULL;
 
 // ==================== 图层指针 (线程安全队列间接控制) ====================
@@ -120,18 +122,19 @@ static void ws2812_task(void *pvParameters)
         }
 
         // 2. 彻底清除硬件缓冲区画布
-        fill_solid(leds, WS2812_LED_COUNT, CRGB::Black);
+        const uint8_t count = active_led_count.load();
+        fill_solid(leds, WS2812_LED_MAX_COUNT, CRGB::Black);
 
         // 3. 【渲染第一层】 背景层
         if (bg_layer)
         {
-            bg_layer->update(leds, WS2812_LED_COUNT);
+            bg_layer->update(leds, count);
         }
 
         // 4. 【渲染第二层】 特效层 (覆盖或混合)
         if (fx_layer)
         {
-            fx_layer->update(leds, WS2812_LED_COUNT);
+            fx_layer->update(leds, count);
             // 如果是一次性动画（如Flow跑完了），引擎自动销毁释放内存，完美暴露出底色
             if (fx_layer->finished())
             {
@@ -143,7 +146,7 @@ static void ws2812_task(void *pvParameters)
         // 5. 【渲染第三层】 顶层悬浮（强制覆盖，手势状态灯绝对可见）
         if (overlay_layer)
         {
-            overlay_layer->update(leds, WS2812_LED_COUNT);
+            overlay_layer->update(leds, count);
             if (overlay_layer->finished())
             {
                 delete overlay_layer;
@@ -163,10 +166,17 @@ static void ws2812_task(void *pvParameters)
 
 void HAL::ws2812_init(void)
 {
+    Preferences prefs;
+    if (prefs.begin("wand-leds", true)) {
+        const uint8_t saved = prefs.getUChar("count", WS2812_LED_DEFAULT_COUNT);
+        if (saved >= WS2812_LED_MIN_COUNT && saved <= WS2812_LED_MAX_COUNT)
+            active_led_count.store(saved);
+        prefs.end();
+    }
     // 默认先关闭灯带电源
     pinMode(PIN_WS2812_EN, INPUT);
     // 初始化 FastLED 物理外设
-    FastLED.addLeds<WS2812, PIN_WS2812, GRB>(leds, WS2812_LED_COUNT);
+    FastLED.addLeds<WS2812, PIN_WS2812, GRB>(leds, WS2812_LED_MAX_COUNT);
     FastLED.setBrightness(255); // 默认全亮，交由动画层自己调节亮度
     FastLED.clear();
 
@@ -185,6 +195,19 @@ void HAL::ws2812_init(void)
         4,
         &ws2812_task_handle,
         1);
+}
+
+uint8_t HAL::ws2812_count(void) { return active_led_count.load(); }
+
+bool HAL::ws2812_set_count(uint8_t count)
+{
+    if (count < WS2812_LED_MIN_COUNT || count > WS2812_LED_MAX_COUNT) return false;
+    Preferences prefs;
+    if (!prefs.begin("wand-leds", false)) return false;
+    const bool saved = prefs.putUChar("count", count) == sizeof(count);
+    prefs.end();
+    if (saved) active_led_count.store(count);
+    return saved;
 }
 
 // 停止引擎并清理内存
