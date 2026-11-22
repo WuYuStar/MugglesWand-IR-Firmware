@@ -106,7 +106,8 @@ bool EventBus::publish(EventID eventId, EventParam param1, EventParam param2,uin
     {
         // Sampling must leave room for back/mode commands during flash writes.
         if(eventId==EVENT_IMU_DATA_UPDATED && uxQueueSpacesAvailable(targets[i])<=4)continue;
-        const bool mode=eventId==EVENT_APP_SET_MODE||eventId==EVENT_IMU_SET_MUX||eventId==EVENT_IMU_RESET_MUX;
+        const bool mode=eventId==EVENT_APP_SET_MODE||eventId==EVENT_IMU_SET_MUX||
+                        eventId==EVENT_IMU_RESET_MUX||eventId==EVENT_IMU_PREPARE_SLEEP;
         if (xQueueSend(targets[i], &event, mode?pdMS_TO_TICKS(20):0) == pdPASS)
         {
             delivered = true;

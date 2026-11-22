@@ -15,6 +15,16 @@ static const char *APEX_ACTIVITY[3] = {"IDLE", "WALK", "RUN"};
 #define I2C_MAX_CLOCK 1000000
 #define ICM42670_I2C_ADDRESS 0x68
 static constexpr size_t kTransferBytes=2560;
+static constexpr uint8_t kWhoAmI = 0x75;
+static constexpr uint8_t kIcm42607Id = 0x60;
+static constexpr uint8_t kAccelData = 0x0b;
+static constexpr uint8_t kPowerManagement = 0x1f;
+static constexpr uint8_t kGyroConfig = 0x20;
+static constexpr uint8_t kAccelConfig = 0x21;
+static constexpr uint8_t kOdr800Hz = 0x06; // Zero full-scale bits select ±2000 dps and ±16 g.
+static constexpr uint8_t kMotionAxes = 0x07;
+static constexpr uint32_t kWakeI2cClock = 100000;
+static constexpr uint8_t kMotionPower = PWR_MGMT0_ACCEL_LP_CLK_RCOSC | PWR_MGMT0_ACCEL_MODE_LP;
 
 // This is used by the event callback (not object aware), declared static
 static inv_imu_sensor_event_t *event;
@@ -45,65 +55,66 @@ ICM42670::ICM42670(TwoWire &i2c_ref, bool lsb)
 /* starts communication with the ICM42670 */
 int ICM42670::begin()
 {
-    struct inv_imu_serif icm_serif;
-    int rc = 0;
-    uint8_t who_am_i;
-    inv_imu_int1_pin_config_t int1_pin_config;
+    detectedModel = Model::Unknown;
+    if (!i2c || i2c->setBufferSize(kTransferBytes) != kTransferBytes || !i2c->begin()) return -1;
+    i2c->setTimeOut(100);
+    i2c->setClock(clk_freq);
 
-    if (i2c != NULL)
-    {
-        if(i2c->setBufferSize(kTransferBytes)!=kTransferBytes||!i2c->begin())return -1;
-        i2c->setTimeOut(100);
-        i2c->setClock(clk_freq);
-        icm_serif.serif_type = UI_I2C;
-        icm_serif.read_reg = i2c_read;
-        icm_serif.write_reg = i2c_write;
+    uint8_t id = 0;
+    if (readImuRegister(*i2c, i2c_address, kWhoAmI, &id, 1) != 0) return -2;
+    if (id == kIcm42607Id) {
+        detectedModel = Model::Sensor42607P;
+        accel_sensitivity = 2048.0f;
+        gyro_sensitivity = 16.4f;
+        DualSerial.println("[IMU] Detected ICM-42607-P (direct sampling)");
+        return 0;
     }
-    else
-    {
-        DualSerial.println("Invalid I2C interface");
-    }
+    if (id != INV_IMU_WHOAMI) return -3;
 
-    /* Initialize serial interface between MCU and Icm43xxx */
+    inv_imu_serif icm_serif{};
     icm_serif.context = (void *)this;
-    icm_serif.max_read = kTransferBytes;  /* maximum number of bytes allowed per serial read */
-    icm_serif.max_write = kTransferBytes-1; /* maximum number of bytes allowed per serial write */
-    rc = inv_imu_init(&icm_driver, &icm_serif, NULL);
-    if (rc != INV_ERROR_SUCCESS)
-    {
-        return rc;
-    }
+    icm_serif.max_read = kTransferBytes;
+    icm_serif.max_write = kTransferBytes - 1;
+    icm_serif.serif_type = UI_I2C;
+    icm_serif.read_reg = i2c_read;
+    icm_serif.write_reg = i2c_write;
+    const int rc = inv_imu_init(&icm_driver, &icm_serif, nullptr);
+    if (rc != INV_ERROR_SUCCESS) return rc;
     icm_driver.sensor_event_cb = event_cb;
     int1_config = {(inv_imu_interrupt_value)0};
-
-    /* Check WHOAMI */
-    rc = inv_imu_get_who_am_i(&icm_driver, &who_am_i);
-    if (rc != 0)
-    {
-        return -2;
-    }
-    if (who_am_i != INV_IMU_WHOAMI)
-    {
-        return -3;
-    }
-
-    /*
-     * Configure interrupts pins
-     * - Polarity LOW
-     * - Pulse mode
-     * - Push-Pull drive
-     */
+    inv_imu_int1_pin_config_t int1_pin_config{};
     int1_pin_config.int_polarity = INT_CONFIG_INT1_POLARITY_LOW;
     int1_pin_config.int_mode = INT_CONFIG_INT1_MODE_PULSED;
     int1_pin_config.int_drive = INT_CONFIG_INT1_DRIVE_CIRCUIT_PP;
-    inv_imu_set_pin_config_int1(&icm_driver, &int1_pin_config);
+    const int pinResult = inv_imu_set_pin_config_int1(&icm_driver, &int1_pin_config);
+    if (pinResult != 0) return pinResult;
 
-    // successful init, return 0
+    detectedModel = Model::Sensor42670P;
+    DualSerial.println("[IMU] Detected ICM-42670-P (FIFO sampling)");
     return 0;
+}
+
+int ICM42670::readRegister(uint32_t reg, uint8_t &value)
+{
+    // The TDK header tags bank-zero constants above the actual 8-bit address.
+    return readImuRegister(*i2c, i2c_address, static_cast<uint8_t>(reg), &value, 1);
+}
+
+int ICM42670::writeRegister(uint32_t reg, uint8_t value)
+{
+    i2c->beginTransmission(i2c_address);
+    const bool queued = i2c->write(static_cast<uint8_t>(reg)) == 1 && i2c->write(value) == 1;
+    const int result = i2c->endTransmission();
+    if (!queued || result != 0) {
+        DualSerial.printf("[IMU] Register 0x%02x <- 0x%02x failed (I2C=%d)\n",
+                          static_cast<uint8_t>(reg), value, result);
+    }
+    return queued && result == 0 ? 0 : -1;
 }
 
 int ICM42670::enterSleepMode()
 {
+    if (model() == Model::Sensor42607P) return writeRegister(kPowerManagement, 0x00);
     int rc = 0;
     /* Disabling FIFO usage to optimize power consumption */
     rc |= inv_imu_disable_accel(&icm_driver);
@@ -115,6 +126,18 @@ int ICM42670::enterSleepMode()
 
 int ICM42670::enableDataFromFifoInterrupt(uint8_t intpin, ICM42670_irq_handler handler)
 {
+    if (model() == Model::Sensor42607P) {
+        // Keep the sensor ODR above the software polling rate (~100 Hz).
+        uint8_t axes = 0;
+        if (writeRegister(INT_SOURCE1, 0) != 0 ||
+            writeRegister(WOM_CONFIG, 0) != 0 ||
+            motionWakeStatus(axes) != 0 ||
+            writeRegister(kGyroConfig, kOdr800Hz) != 0 ||
+            writeRegister(kAccelConfig, kOdr800Hz) != 0 ||
+            writeRegister(kPowerManagement, 0x0f) != 0) return -1;
+        delay(100);
+        return i2c->setClock(clk_freq) ? 0 : -1;
+    }
     int rc = 0;
     rc |= enableFifoInterrupt(intpin, handler, 1);
     // Accel ODR = 100 Hz and Full Scale Range = 16G
@@ -124,8 +147,78 @@ int ICM42670::enableDataFromFifoInterrupt(uint8_t intpin, ICM42670_irq_handler h
     return rc;
 }
 
+bool ICM42670::set42607MotionThreshold(uint8_t reg, uint8_t value)
+{
+    if (writeRegister(MADDR_W, reg) != 0 || writeRegister(M_W, value) != 0) return false;
+    delayMicroseconds(20);
+    if (writeRegister(MADDR_R, reg) != 0) return false;
+    delayMicroseconds(20);
+    uint8_t actual = 0;
+    const bool matches = readRegister(M_R, actual) == 0 && actual == value;
+    delayMicroseconds(20);
+    return matches;
+}
+
+int ICM42670::motionWakeStatus(uint8_t &axes)
+{
+    uint8_t status = 0;
+    const int result = readRegister(INT_STATUS2, status);
+    axes = status & kMotionAxes;
+    return result;
+}
+
+int ICM42670::start42607MotionWake(uint8_t threshold)
+{
+    // DS-000417 and AN-000266: keep RCOSC through low-power entry and exit.
+    // The indirect register bank also needs the RC clock while programming.
+    if (!i2c->setClock(kWakeI2cClock)) return -10;
+    if (writeRegister(INT_SOURCE0, 0) != 0 || writeRegister(INT_SOURCE1, 0) != 0 ||
+        writeRegister(WOM_CONFIG, 0) != 0) return -11;
+    uint8_t unused = 0;
+    if (readRegister(INT_STATUS, unused) != 0 || motionWakeStatus(unused) != 0) return -18;
+
+    uint8_t pin = 0;
+    if (readRegister(INT_CONFIG, pin) != 0) return -20;
+    constexpr uint8_t pinMask = INT_CONFIG_INT1_MODE_MASK | INT_CONFIG_INT1_DRIVE_CIRCUIT_MASK |
+                                INT_CONFIG_INT1_POLARITY_MASK;
+    // Use the default 100 µs pulse. Holding INT1 low in latched mode stalled
+    // the IMU's I2C bus on the tested board, even after the host rebooted.
+    const uint8_t pulsedLow = pin & ~pinMask;
+    if (pin != pulsedLow && writeRegister(INT_CONFIG, pulsedLow) != 0) return -21;
+    if (writeRegister(kPowerManagement, PWR_MGMT0_IDLE_MASK) != 0) return -11;
+    uint8_t clock = 0;
+    const uint32_t start = millis();
+    do {
+        if (readRegister(MCLK_RDY, clock) != 0) return -12;
+        if (clock & MCLK_RDY_MCLK_RDY_MASK) break;
+        delay(1);
+    } while (millis() - start < 25);
+    if (!(clock & MCLK_RDY_MCLK_RDY_MASK)) return -12;
+
+    if (writeRegister(BLK_SEL_W, 0) != 0 || writeRegister(BLK_SEL_R, 0) != 0 ||
+        !set42607MotionThreshold(static_cast<uint8_t>(ACCEL_WOM_X_THR_MREG1), threshold) ||
+        !set42607MotionThreshold(static_cast<uint8_t>(ACCEL_WOM_Y_THR_MREG1), threshold) ||
+        !set42607MotionThreshold(static_cast<uint8_t>(ACCEL_WOM_Z_THR_MREG1), threshold)) return -13;
+
+    if (writeRegister(kAccelConfig, ACCEL_CONFIG0_ODR_50_HZ) != 0) return -22;
+    if (writeRegister(kPowerManagement, kMotionPower) != 0) return -23;
+    delay(80); // Let the low-power accelerometer settle before arming WoM.
+
+    uint8_t axes = 0;
+    if (motionWakeStatus(axes) != 0 || writeRegister(INT_SOURCE1, kMotionAxes) != 0 ||
+        // Comparing with the initial stationary sample also detects slow pickup.
+        writeRegister(WOM_CONFIG, WOM_CONFIG_WOM_EN_MASK) != 0) return -15;
+    uint8_t routes = 0, wom = 0, power = 0;
+    if (readRegister(INT_SOURCE1, routes) != 0 || readRegister(WOM_CONFIG, wom) != 0 ||
+        readRegister(kPowerManagement, power) != 0 || (routes & kMotionAxes) != kMotionAxes ||
+        !(wom & WOM_CONFIG_WOM_EN_MASK) || power != kMotionPower) return -16;
+    return 0;
+}
+
 int ICM42670::startWakeOnMotion(uint8_t wom_threshold)
 {
+    if (model() == Model::Sensor42607P) return start42607MotionWake(wom_threshold);
+    if (model() != Model::Sensor42670P) return -1;
     int rc = 0;
     inv_imu_apex_parameters_t apex_inputs;
 
@@ -250,7 +343,7 @@ int ICM42670::enableFifoInterrupt(uint8_t intpin, ICM42670_irq_handler handler, 
     rc |= inv_imu_set_config_int1(&icm_driver, &int1_config);
     rc |= inv_imu_write_reg(&icm_driver, FIFO_CONFIG2, 1, &fifo_watermark);
     // Set fifo_wm_int_w generating condition : fifo_wm_int_w generated when counter == threshold
-    rc |= inv_imu_read_reg(&icm_driver, FIFO_CONFIG5_MREG1, 1, &data);
+    if (inv_imu_read_reg(&icm_driver, FIFO_CONFIG5_MREG1, 1, &data) != 0) return -1;
     data &= (uint8_t)~FIFO_CONFIG5_WM_GT_TH_EN;
     rc |= inv_imu_write_reg(&icm_driver, FIFO_CONFIG5_MREG1, 1, &data);
     // Disable APEX to use 2.25kB of fifo for raw data
@@ -264,6 +357,18 @@ int ICM42670::getDataFromFifo(ICM42670_sensor_event_cb event_cb)
     if (event_cb == NULL)
     {
         return -1;
+    }
+    if (model() == Model::Sensor42607P) {
+        uint8_t data[12];
+        if (readImuRegister(*i2c, i2c_address, kAccelData, data, sizeof(data)) != 0) return -1;
+        inv_imu_sensor_event_t sample{};
+        sample.sensor_mask = (1 << INV_SENSOR_ACCEL) | (1 << INV_SENSOR_GYRO);
+        for (int i = 0; i < 3; ++i) {
+            sample.accel[i] = static_cast<int16_t>((uint16_t(data[i*2]) << 8) | data[i*2+1]);
+            sample.gyro[i] = static_cast<int16_t>((uint16_t(data[6+i*2]) << 8) | data[7+i*2]);
+        }
+        event_cb(&sample);
+        return 0;
     }
     icm_driver.sensor_event_cb = event_cb;
     return inv_imu_get_data_from_fifo(&icm_driver);
@@ -283,17 +388,11 @@ bool ICM42670::isGyroDataValid(inv_imu_sensor_event_t *evt)
 static int i2c_write(inv_imu_serif *serif, uint8_t reg, const uint8_t *wbuffer, uint32_t wlen)
 {
     ICM42670 *obj = (ICM42670 *)serif->context;
+    if (wlen >= kTransferBytes) return -1;
     obj->i2c->beginTransmission(obj->i2c_address);
-    obj->i2c->write(reg);
-    for (uint8_t i = 0; i < wlen; i++)
-    {
-        obj->i2c->write(wbuffer[i]);
-    }
-    if (obj->i2c->endTransmission() != 0)
-    {
-        return -1; // 设备无响应时返回错误
-    }
-    return 0;
+    const bool queued = obj->i2c->write(reg) == 1 && (!wlen || obj->i2c->write(wbuffer, wlen) == wlen);
+    const int result = obj->i2c->endTransmission();
+    return queued && result == 0 ? 0 : -1;
 }
 
 static int i2c_read(inv_imu_serif *serif, uint8_t reg, uint8_t *rbuffer, uint32_t rlen)

@@ -3,6 +3,7 @@
     功能：新手引导、玩法体验、真实设备状态、练习反馈和高级诊断
 */
 #include "AP_Web.h"
+#include "Sleep.h"
 #include "Config.h"
 #include "Service/Console.h"
 #include "Service/DualPrint.h"
@@ -106,6 +107,17 @@ static void sendWebStatus(AsyncWebSocketClient *client)
     }
     message += "],\"gestureProfile\":" + jsonString(gesture_model_key());
     message += ",\"gestureProfileTitle\":" + jsonString(gesture_model_title());
+    message += ",\"imuModel\":" + jsonString(HAL::ICM42670P_modelName());
+    message += ",\"wakeSource\":" + jsonString(sleep_wake_source());
+    message += ",\"motionWakeTrial\":";
+    message += WAND_42607_SLEEP_TRIAL ? "true" : "false";
+    if (WAND_42607_SLEEP_TRIAL) {
+        message += ",\"imuSda\":" + String(digitalRead(PIN_IMU_SDA));
+        message += ",\"imuScl\":" + String(digitalRead(PIN_IMU_SCL));
+        message += ",\"imuInt\":" + String(digitalRead(PIN_IMU_INT));
+    }
+    message += ",\"motionWake\":";
+    message += HAL::ICM42670P_supportsMotionWake() ? "true" : "false";
     message += ",\"imuReady\":";message+=HAL::ICM42670P_ready()?"true":"false";
     message += ",\"inferenceReady\":";message+=inference_ready()?"true":"false";
     message += ",\"sampleCount\":"+String(HAL::ICM42670P_samples());

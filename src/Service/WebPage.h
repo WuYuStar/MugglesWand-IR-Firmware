@@ -84,7 +84,8 @@ input[type=file]{width:100%;overflow:hidden}
 progress{display:block;width:100%;height:12px;accent-color:var(--accent);margin-top:12px}
 .section-title{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:12px 0}
 .log{height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#272620;color:#f3efe4;border-radius:8px;padding:12px;font:12px/1.5 monospace}
-.chart{display:block;width:100%;height:160px;background:var(--bg);border-radius:8px;margin:8px 0 12px}
+.chart{display:block;width:100%;height:120px;background:var(--bg);border-radius:8px;margin:4px 0 12px}
+.chart-label{font-size:12px;font-weight:600;color:var(--muted)}
 .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100% - 32px);background:#292823;color:#fff;padding:12px 16px;border-radius:8px;z-index:10}
 dialog{border:1px solid var(--line);border-radius:12px;padding:20px;max-width:460px;width:calc(100% - 32px);color:var(--ink);background:var(--paper)}
 dialog::backdrop{background:#29282377}dialog .row{justify-content:flex-end;margin-top:16px}
@@ -120,7 +121,7 @@ dialog::backdrop{background:#29282377}dialog .row{justify-content:flex-end;margi
 <article class="command-row"><h2>红外配件</h2><div class="row command-actions"><a href="#ir-settings" id="ir-command-link">去配置</a><select id="ir-command-slot" aria-label="选择红外信号" hidden></select><button id="ir-command-send" data-device hidden disabled>重放信号</button></div><p class="small" id="ir-command-state" role="status"></p></article>
 <article class="command-row"><h2>Home Assistant</h2><div class="row"><a href="#ha-settings" id="ha-command-link">去配置</a><button id="ha-test" data-device disabled hidden>发送测试事件</button></div><p id="ha-test-result" class="small" role="status" hidden></p></article>
 </div>
-<div class="secondary-links"><a href="#learn">挥杖练习</a><a href="#help">使用帮助</a></div>
+<div class="secondary-links"><a href="#learn">挥杖练习</a><a href="#advanced">采集曲线</a><a href="#help">使用帮助</a></div>
 </section>
 <section id="settings" data-page aria-labelledby="settings-title" hidden>
 <div class="intro"><h1 id="settings-title" tabindex="-1">配置</h1></div>
@@ -169,6 +170,7 @@ dialog::backdrop{background:#29282377}dialog .row{justify-content:flex-end;margi
 <dl class="device-info panel">
 <div><dt>当前模式</dt><dd id="device-mode">等待读取</dd></div>
 <div><dt>固件版本</dt><dd id="version">—</dd></div>
+<div><dt>动作传感器</dt><dd id="imu-model">—</dd></div>
 <div><dt>蓝牙连接</dt><dd id="bluetooth">等待读取</dd></div>
 <div><dt>充电状态</dt><dd id="charging">等待读取</dd></div>
 <div><dt>红外配件</dt><dd><span id="receiver-status">等待读取</span><a href="#ir-settings" id="receiver-fix" hidden>查看</a></dd></div>
@@ -186,7 +188,8 @@ dialog::backdrop{background:#29282377}dialog .row{justify-content:flex-end;margi
 <div class="intro"><a class="back-link" href="#device">返回设备</a><h1 id="power-title" tabindex="-1">电源与 Wi-Fi</h1></div>
 <div class="panel">
 <div class="setting-row"><span>重新启动</span><button data-device data-action="reboot">重新启动</button></div>
-<div class="setting-row"><span>暂时待机</span><button data-device data-action="sleep">进入休眠</button></div>
+<div class="setting-row"><span>暂时待机</span><button id="sleep-action" data-device data-action="sleep">进入休眠</button></div>
+<p id="sleep-note" class="small" hidden>当前动作传感器暂未启用休眠，可使用「关闭魔杖」。</p>
 </div>
 <div class="panel"><h2>断开设备</h2>
 <div class="setting-row"><span>关闭电源</span><button data-device class="danger" data-action="shutdown">关闭魔杖</button></div>
@@ -209,7 +212,7 @@ dialog::backdrop{background:#29282377}dialog .row{justify-content:flex-end;margi
 </section>
 <section id="advanced" data-page data-parent="device" aria-labelledby="advanced-title" hidden>
 <div class="intro"><a class="back-link" href="#device">返回设备</a><h1 id="advanced-title" tabindex="-1">采集与诊断</h1></div>
-<section class="panel"><p id="capture-state" role="status">等待读取设备状态</p><div class="row"><button class="primary" data-device id="capture-start" data-cmd="imu" data-message="正在切换到动作采集">采集动作数据</button><button data-device id="capture-stop" hidden data-cmd="back" data-message="正在结束采集，恢复手势识别">结束采集 / 恢复施法</button></div><details><summary>高级命令</summary><div><div class="row"><button data-device data-cmd="stop" data-message="正在暂停动作检测，恢复施法请点返回手势识别">暂停动作检测</button></div><div class="row"><button data-device data-cmd="info" data-message="已请求设备信息，请查看日志">读取设备信息</button><button data-device data-cmd="debug" data-message="已请求保持唤醒；恢复自动休眠需要重启魔杖">保持唤醒</button></div><p class="small">“保持唤醒”会增加耗电，重启后恢复自动休眠。</p></div></details></section><details id="diagnostic-log"><summary>原始日志</summary><div><div class="section-title"><h3>诊断日志</h3><button id="clear-log">清空日志</button></div><p class="small">这里保留原始信息，方便排查问题；不会上传到互联网。</p><pre class="log" id="log-window" aria-label="诊断日志"></pre></div></details><div id="capture-charts" hidden><p class="small">采集动作数据后显示实时曲线：红色为横向角速度，金色为纵向角速度（rad/s）。</p><canvas id="motion-chart" class="chart" aria-label="动作角速度曲线"></canvas><p class="small">动作检测阶段：0 初始化 / 1 静止 / 2 开始运动 / 3 有效挥动 / 4 完成。</p><canvas id="state-chart" class="chart" aria-label="手势检测阶段曲线"></canvas></div>
+<section class="panel"><p id="capture-state" role="status">等待读取设备状态</p><div class="row"><button class="primary" data-device id="capture-start" data-cmd="imu" data-message="正在切换到动作采集">采集动作数据</button><button data-device id="capture-stop" hidden data-cmd="back" data-message="正在结束采集，恢复手势识别">结束采集 / 恢复施法</button></div><details><summary>高级命令</summary><div><div class="row"><button data-device data-cmd="stop" data-message="正在暂停动作检测，恢复施法请点返回手势识别">暂停动作检测</button></div><div class="row"><button data-device data-cmd="info" data-message="已请求设备信息，请查看日志">读取设备信息</button><button data-device data-cmd="debug" data-message="已请求保持唤醒；恢复自动休眠需要重启魔杖">保持唤醒</button></div><p class="small">“保持唤醒”会增加耗电，重启后恢复自动休眠。</p></div></details></section><div id="capture-charts" class="panel"><span class="chart-label">横向角速度</span><canvas id="motion-x-chart" class="chart" aria-label="横向角速度曲线"></canvas><span class="chart-label">纵向角速度</span><canvas id="motion-z-chart" class="chart" aria-label="纵向角速度曲线"></canvas><span class="chart-label">动作检测阶段</span><canvas id="state-chart" class="chart" aria-label="动作检测阶段曲线"></canvas></div><details id="diagnostic-log"><summary>原始日志</summary><div><div class="section-title"><h3>诊断日志</h3><button id="clear-log">清空日志</button></div><p class="small">这里保留原始信息，方便排查问题；不会上传到互联网。</p><pre class="log" id="log-window" aria-label="诊断日志"></pre></div></details>
 </section>
 <section id="help" data-page data-parent="control" aria-labelledby="help-title" hidden>
 <div class="intro"><a class="back-link" href="#control">返回指令页</a><h1 id="help-title" tabindex="-1">使用帮助</h1></div>
@@ -326,7 +329,7 @@ let previewFeedback=null;
 let ledDirty=false,ledSaving=false,ledCurrent=39;
 let bindingState=null,bindingDraft=null,bindingEffectsDraft=null,bindingRevision=0,bindingDirty=false,bindingSaving=false,bindingTimer;
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4500)}
-function online(connected){if(!connected){lastStatus=0;ledSaving=false;$('led-count').disabled=true;}$('connection').classList.toggle('online',connected);$('connection-text').textContent=connected?'已连接魔杖':expectedDisconnect||'连接已断开，正在重试';$('offline').hidden=connected;document.querySelectorAll('[data-device]').forEach(b=>b.disabled=!connected);$('pattern').disabled=!connected||!$('pattern').value;if(!connected){$('ir-add').disabled=true;$('mode-bar').hidden=true;$('device-mode').textContent='设备已离线';$('capture-state').textContent='设备已离线';$('capture-charts').hidden=true;$('ha-test').hidden=true;$('ha-command-link').hidden=false;$('pair-help').hidden=true;$('ha-wifi-state').textContent='等待读取';$('ha-state').textContent='等待读取';$('back-mode').hidden=true;document.querySelectorAll('[data-mode]').forEach(card=>card.dataset.active='false');$('mode').textContent='设备已离线';$('bluetooth').textContent='等待重新连接';$('charging').textContent='等待重新连接';$('receiver-status').textContent='等待读取';endPractice(false);bindingSaving=false;clearTimeout(bindingTimer);document.querySelectorAll('#gesture-mapping select').forEach(s=>s.disabled=true);document.querySelectorAll('#ir-signals button').forEach(b=>b.disabled=true);$('ir-command-send').disabled=true;$('save-bindings').disabled=true;$('reload-bindings').disabled=true}}
+function online(connected){if(!connected){lastStatus=0;ledSaving=false;$('led-count').disabled=true;}$('connection').classList.toggle('online',connected);$('connection-text').textContent=connected?'已连接魔杖':expectedDisconnect||'连接已断开，正在重试';$('offline').hidden=connected;document.querySelectorAll('[data-device]').forEach(b=>b.disabled=!connected);$('pattern').disabled=!connected||!$('pattern').value;if(!connected){$('ir-add').disabled=true;$('mode-bar').hidden=true;$('device-mode').textContent='设备已离线';$('capture-state').textContent='设备已离线';$('ha-test').hidden=true;$('ha-command-link').hidden=false;$('pair-help').hidden=true;$('ha-wifi-state').textContent='等待读取';$('ha-state').textContent='等待读取';$('back-mode').hidden=true;document.querySelectorAll('[data-mode]').forEach(card=>card.dataset.active='false');$('mode').textContent='设备已离线';$('bluetooth').textContent='等待重新连接';$('charging').textContent='等待重新连接';$('receiver-status').textContent='等待读取';endPractice(false);bindingSaving=false;clearTimeout(bindingTimer);document.querySelectorAll('#gesture-mapping select').forEach(s=>s.disabled=true);document.querySelectorAll('#ir-signals button').forEach(b=>b.disabled=true);$('ir-command-send').disabled=true;$('save-bindings').disabled=true;$('reload-bindings').disabled=true}}
 function send(command,message){if(!ws||ws.readyState!==WebSocket.OPEN||Date.now()-lastStatus>10000){toast('还没有连上魔杖，请检查 Wi-Fi 后重试');return false}ws.send(command);if(message)toast(message);return true}
 $('led-count').onchange=()=>{ledDirty=Number($('led-count').value)!==ledCurrent;$('led-feedback').textContent='';$('led-save').disabled=!ledDirty||ledSaving};
 $('led-save').onclick=()=>{if(ledSaving||!ledDirty||!send('web:led-count '+$('led-count').value))return;ledSaving=true;$('led-save').disabled=true;$('led-feedback').textContent='正在保存…'};
@@ -336,6 +339,9 @@ function renderStatus(s){
  renderIr(s.irSlots,s.irLink,s.receiverConflict,s.receiver);
  renderHa(s);
  renderLedCount(s);
+ $('imu-model').textContent=s.imuModel||'未检测到';
+ $('sleep-action').disabled=s.motionWake===false;
+ $('sleep-note').hidden=s.motionWake!==false;
  const mode=modeNames[s.mode]||'正在切换玩法';
  $('device-mode').textContent=s.mode===2&&(s.imuReady===false||s.inferenceReady===false)?'动作检测恢复中':mode;
  $('mode-bar').hidden=activePage!=='control'&&(s.mode===2||(activePage==='advanced'&&s.mode===1));
@@ -348,7 +354,7 @@ function renderStatus(s){
  const capturing=s.mode===1;
  $('capture-state').textContent=capturing?'正在采集动作，手势识别已暂停':'准备采集动作';
  $('capture-start').hidden=capturing;
- $('capture-stop').hidden=$('capture-charts').hidden=!capturing;
+ $('capture-stop').hidden=!capturing;
  if(capturing)scheduleCharts();$('back-mode').hidden=s.mode===2;renderBindings(s);syncPractice(s);$('upload-model-file').disabled=!!s.modelUpdating||modelUploading||!$('model-file').files.length;if(s.modelUpdating){document.querySelectorAll('[data-device]').forEach(b=>b.disabled=true);$('connection-text').textContent='正在更新模型'}$('mode').textContent=s.modelUpdating?'正在更新模型':s.mode===2&&(s.imuReady===false||s.inferenceReady===false)?'动作检测恢复中，请稍候':modeNames[s.mode]||'正在切换玩法';document.querySelectorAll('[data-mode]').forEach(card=>card.dataset.active=String(Number(card.dataset.mode)===s.mode));$('bluetooth').textContent=s.bleConnected?'已配对连接':s.bleEnabled?'已开启，等待配对':'蓝牙已关闭';$('charging').textContent=s.charging?'正在充电':'未在充电';$('version').textContent=s.version;$('wifi-name').textContent=s.ssid;$('wifi-pass').textContent=s.password;document.querySelectorAll('.ble-name').forEach(el=>el.textContent=s.bleName);$('receiver-status').textContent=s.receiverConflict?'信道冲突':s.irLink?.online?'已连接':s.irLink?.paired?'等待设备':'未连接';const select=$('pattern');const options=JSON.stringify(s.patterns);if(select.dataset.options!==options){const previous=select.value;select.replaceChildren();s.patterns.forEach((name,index)=>{const option=document.createElement('option');option.value=index;option.textContent=({MugglesWand:'魔杖文字',Star:'星星',Rainbow:'彩虹'})[name]||name;select.appendChild(option)});select.dataset.options=options;if([...select.options].some(o=>o.value===previous))select.value=previous}select.disabled=!select.options.length;if(practice&&s.mode!==2){$('practice-title').textContent='当前已切换玩法';$('practice-detail').textContent='点「返回手势识别」后继续挥杖练习。'}}
 function appendLog(text){pending+=text;const lines=pending.split('\n');pending=lines.pop().slice(-2048);for(let line of lines){line=line.replace(/\r$/,'');if(!line)continue;logs.push(line);if(logs.length>180)logs.shift();const sample=line.match(/^(-?\d+\.?\d*),(-?\d+\.?\d*),(-?\d+)$/);if(sample){motion.push(sample.slice(1).map(Number));if(motion.length>200)motion.shift();scheduleCharts()}}const el=$('log-window');if(!$('advanced').hidden&&$('diagnostic-log').open){el.textContent=logs.join('\n');el.scrollTop=el.scrollHeight}}
 let practiceCatalog='';
@@ -418,8 +424,8 @@ $('ir-pair').onclick=()=>{const mac=$('ir-pair').dataset.mac;if(mac)send('web:ir
 $('ir-unpair').onclick=()=>send('web:ir-unpair');
 $('ir-command-send').onclick=()=>{const slot=Number($('ir-command-slot').value);if(Number.isInteger(slot)&&slot>=0&&slot<32)irCommand(0x42,slot)};
 let motion=[],chartFrame=0;
-function scheduleCharts(){if($('advanced').hidden||$('capture-charts').hidden||chartFrame)return;chartFrame=requestAnimationFrame(()=>{chartFrame=0;drawChart('motion-chart',[0,1],10);drawChart('state-chart',[2],4)})}
-function drawChart(id,indices,range){const canvas=$(id),width=canvas.clientWidth,height=canvas.clientHeight;if(!width)return;const dpr=window.devicePixelRatio||1;canvas.width=width*dpr;canvas.height=height*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);const states=id==='state-chart';if(!states)for(const point of motion)range=Math.max(range,Math.abs(point[0]),Math.abs(point[1]));ctx.strokeStyle='#e0d4be';ctx.fillStyle='#807360';ctx.font='11px sans-serif';for(let n=0;n<=4;n++){const y=15+(height-35)*n/4;ctx.beginPath();ctx.moveTo(35,y);ctx.lineTo(width-10,y);ctx.stroke();ctx.fillText((states?range*(1-n/4):range*(1-n/2)).toFixed(0),4,y+4)}indices.forEach((index,series)=>{ctx.strokeStyle=['#b15549','#b48c3c'][series];ctx.lineWidth=1.5;ctx.beginPath();motion.forEach((point,n)=>{const x=35+(width-45)*n/199;const ratio=states?point[index]/range:(point[index]+range)/(range*2);const y=15+(height-35)*(1-ratio);if(n)ctx.lineTo(x,y);else ctx.moveTo(x,y)});ctx.stroke()})}
+function scheduleCharts(){if($('advanced').hidden||chartFrame)return;chartFrame=requestAnimationFrame(()=>{chartFrame=0;drawChart('motion-x-chart',0,10);drawChart('motion-z-chart',1,10);drawChart('state-chart',2,4)})}
+function drawChart(id,index,range){const canvas=$(id),width=canvas.clientWidth,height=canvas.clientHeight;if(!width)return;const dpr=window.devicePixelRatio||1;canvas.width=width*dpr;canvas.height=height*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);const states=index===2;const top=12,bottom=height-18,left=34,right=width-10;if(!states)for(const point of motion)range=Math.max(range,Math.abs(point[index]));ctx.strokeStyle='#e0d4be';ctx.fillStyle='#807360';ctx.font='11px sans-serif';for(let n=0;n<=4;n++){const y=top+(bottom-top)*n/4;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();ctx.fillText((states?range*(1-n/4):range*(1-n/2)).toFixed(0),4,y+4)}ctx.strokeStyle=states?'#795613':index===0?'#b15549':'#b48c3c';ctx.lineWidth=1.5;ctx.beginPath();motion.forEach((point,n)=>{const x=left+(right-left)*n/199;const ratio=states?point[index]/range:(point[index]+range)/(range*2);const y=top+(bottom-top)*(1-ratio);if(n)ctx.lineTo(x,y);else ctx.moveTo(x,y)});ctx.stroke()}
 window.addEventListener('resize',scheduleCharts);
 function endPractice(restore){practice=false;clearTimeout(practiceTimer);$('practice-start').hidden=false;$('practice-end').hidden=true;if(restore)send('back','练习已结束，正在恢复手势识别');$('practice-title').textContent=restore?'练习已结束':'等待练习';$('practice-detail').textContent='停稳 → 挥杖 → 停稳。识别成功会执行已绑定的动作。'}
 document.querySelectorAll('[data-cmd]').forEach(button=>button.addEventListener('click',()=>send(button.dataset.cmd,button.dataset.message)));

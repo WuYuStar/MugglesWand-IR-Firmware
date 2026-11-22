@@ -26,10 +26,20 @@ static void button_task(void *param)
 
     static uint8_t pressCount = 0;
     static uint32_t lastReleaseTime = 0;
+    bool rawPressed = false;
+    bool pressed = false;
+    uint32_t rawChangedAt = millis();
 
     while (1)
     {
-        bool pressed = digitalRead(PIN_KEY) == LOW;
+        const bool nextRaw = digitalRead(PIN_KEY) == LOW;
+        if (nextRaw != rawPressed) {
+            rawPressed = nextRaw;
+            rawChangedAt = millis();
+        }
+        if (pressed != rawPressed && millis() - rawChangedAt >= 60) {
+            pressed = rawPressed;
+        }
 
         if (pressed)
         {

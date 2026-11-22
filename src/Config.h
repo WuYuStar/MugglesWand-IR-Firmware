@@ -2,7 +2,7 @@
 
 // Project Information
 #define PROJECT_NAME "Muggles' Wand" // 项目名称
-#define FIRMWARE_VER "6.3-rc1"      // Configurable LED count
+#define FIRMWARE_VER "6.4"
 #define BUILD_TIME __DATE__ "  " __TIME__
 
 // AP
@@ -16,6 +16,9 @@
 #define PIN_IMU_SDA 10 // IMU SDA引脚(外部上拉)
 #define PIN_IMU_SCL 11 // IMU SCL引脚(外部上拉)
 #define PIN_IMU_INT 12 // IMU中断引脚(IMU自身内部上拉)
+#ifndef WAND_42607_SLEEP_TRIAL
+#define WAND_42607_SLEEP_TRIAL 0
+#endif
 
 // WS2812
 #define PIN_WS2812 38       // WS2812 数据引脚

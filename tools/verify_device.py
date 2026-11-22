@@ -57,7 +57,7 @@ class Device:
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--host',default='192.168.4.1');parser.add_argument('--version',default='6.1-rc1')
+    parser.add_argument('--host',default='192.168.4.1');parser.add_argument('--version',default='6.4')
     parser.add_argument('--seconds',type=int,default=120);parser.add_argument('--cycles',type=int,default=0)
     parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()
     if args.seconds<1 or not 0<=args.cycles<=100:parser.error('Use seconds>=1 and cycles0..100')

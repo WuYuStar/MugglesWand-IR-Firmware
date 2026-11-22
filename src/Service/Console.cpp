@@ -24,6 +24,7 @@ static void console_print_help()
     DualSerial.println("info           - 查看设备与电池信息");
     DualSerial.println("reboot         - 重新启动（网页会暂时断开）");
     DualSerial.println("sleep          - 休眠，拿起可唤醒（网页会断开）");
+    DualSerial.println("wom-test       - 42607 动作唤醒检查，约 30 秒后恢复采样");
     DualSerial.println("shutdown       - 关机，单击底部按键开机");
     DualSerial.println("ota            - 固件升级模式，随后打开 /update");
     DualSerial.println("ap             - 切换 Wi-Fi 热点（关闭后网页会断开）");
@@ -66,6 +67,11 @@ void console_parse(char *cmd)
     else if (!strcmp(token, "sleep"))
     {
         EventBus::publish(EVENT_SYS_SLEEP);
+    }
+    else if (!strcmp(token, "wom-test"))
+    {
+        if (!EventBus::publish(EVENT_IMU_TEST_MOTION_WAKE))
+            DualSerial.println("[WoM] IMU task unavailable");
     }
     else if (!strcmp(token, "shutdown"))
     {

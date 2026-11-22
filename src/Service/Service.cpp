@@ -80,8 +80,14 @@ static void system_service_task(void *param)
                 break;
             case EVENT_SYS_SLEEP:
                 if(event.param1.i32==1&&(!HAL::ICM42670P_idle()||ap_web_has_clients()||OTA_active()))break;
-                EventBus::publish(EVENT_IMU_RESET_MUX);
-                EventBus::publish(EVENT_IMU_SET_WOM);
+                if (!sleep_prepare()) {
+                    DualSerial.println("[SLEEP] ESP32 wake source setup failed; staying awake");
+                    break;
+                }
+                if (!HAL::ICM42670P_prepareSleep()) {
+                    DualSerial.println("[SLEEP] IMU wake setup failed; staying awake");
+                    break;
+                }
                 HAL::ws2812_stop();
                 sleep_enter();
                 break;

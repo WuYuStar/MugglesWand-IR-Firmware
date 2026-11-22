@@ -14,12 +14,13 @@ args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 source = Path(__file__).resolve().parents[1] / 'src/Service/WebPage.h'
 html = source.read_text().split('R"raw(\n', 1)[1].rsplit(')raw";', 1)[0]
-status = dict(type='status', version='6.3-rc1', ssid="Muggles' Wand", password='12345678',
+status = dict(type='status', version='6.4', ssid="Muggles' Wand", password='12345678',
               bleName="Muggles' Wand", mode=2, bleEnabled=True, bleConnected=False,
+              imuModel='ICM-42607-P', motionWake=False,
               charging=False, receiver=True, ledCount=39, patterns=['MugglesWand', 'Star', 'Rainbow'],
-              gestureProfile='legacy-v1', gestureProfileTitle='原版手势模型',
-              gestureLabels=['关灯', '开灯', '向上', '向下', '鼠标', '照明魔法', '音量', '光绘'],
-              bindings=[-1,-1,-1,-1,4,5,6,7], gestureEffects=[-1]*8, lightEffects=[],
+              gestureProfile='letters-v1', gestureProfileTitle='字母手势模型',
+              gestureLabels=['a', 'e', 'n', 'o', 'p', 's', '8', '∞'],
+              bindings=[5,4,-1,-1,6,-1,-1,-1], gestureEffects=[-1]*8, lightEffects=[],
               bindingRevision=1, bindingsWritable=True,
               irSlots=[dict(state=1 if i == 0 else 0, online=False,
                             name='客厅开关' if i == 0 else '') for i in range(32)],
@@ -203,17 +204,20 @@ with sync_playwright() as p:
     page.locator('#practice-start').click()
     # Near-threshold rejection must remain a rejection, even if rounded logs say P:0.60.
     sockets[-1].send(json.dumps(dict(type='recognition', id=5, action=5, confidence=0.5996, accepted=False)))
-    page.get_by_text('未达到门槛，候选：照明魔法', exact=True).wait_for()
+    page.get_by_text('未达到门槛，候选：s', exact=True).wait_for()
     sockets[-1].send(json.dumps(dict(type='recognition', id=5, action=5, confidence=0.89, accepted=True)))
-    page.get_by_text('识别到：照明魔法', exact=True).wait_for()
+    page.get_by_text('识别到：s', exact=True).wait_for()
     page.locator('#practice-end').click()
     page.get_by_role('link', name='设备', exact=True).click()
     page.locator('#device').wait_for()
     assert page.locator('#device #version').text_content() == status['version']
+    assert page.locator('#imu-model').text_content() == 'ICM-42607-P'
     assert page.locator('#device #bluetooth').is_visible()
     page.get_by_role('link', name='采集与诊断', exact=True).click()
     page.locator('#advanced').wait_for()
     assert page.locator('.page-nav a[href="#device"]').get_attribute('aria-current') == 'location'
+    for chart in ('motion-x-chart', 'motion-z-chart', 'state-chart'):
+        assert page.locator('#' + chart).is_visible()
     page.get_by_role('button', name='采集动作数据', exact=True).click()
     page.wait_for_function("document.getElementById('mode').textContent==='动作数据采集中'")
     page.locator('#capture-charts').wait_for()
@@ -223,10 +227,19 @@ with sync_playwright() as p:
     sockets[-1].send('tial\n')
     page.wait_for_function("document.getElementById('log-window').textContent.includes('partial')")
     assert '<script>alert(1)</script>' in page.locator('#log-window').inner_text()
+    page.locator('#advanced').screenshot(path=str(args.output / 'capture-curves.png'))
     page.get_by_role('button', name='结束采集 / 恢复施法', exact=True).click()
     page.wait_for_function("document.getElementById('mode').textContent==='挥杖识别已就绪'")
+    for chart in ('motion-x-chart', 'motion-z-chart', 'state-chart'):
+        assert page.locator('#' + chart).is_visible()
     page.get_by_role('link', name='返回设备', exact=True).click()
     page.get_by_role('link', name='电源与 Wi-Fi', exact=True).click()
+    page.locator('#power').wait_for()
+    assert page.locator('#sleep-action').is_disabled() and page.locator('#sleep-note').is_visible()
+    status.update(imuModel='ICM-42670-P', motionWake=True)
+    sockets[-1].send(json.dumps(status))
+    page.wait_for_function("!document.getElementById('sleep-action').disabled")
+    assert page.locator('#sleep-note').is_hidden()
     before = commands.count('shutdown')
     page.get_by_role('button', name='关闭魔杖', exact=True).click()
     page.get_by_role('button', name='取消', exact=True).click()

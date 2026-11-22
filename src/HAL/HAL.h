@@ -17,6 +17,9 @@ namespace HAL
     int8_t ICM42670P_getDataMux(void);
     bool ICM42670P_ready();
     bool ICM42670P_idle();
+    const char *ICM42670P_modelName();
+    bool ICM42670P_supportsMotionWake();
+    bool ICM42670P_prepareSleep();
     uint32_t ICM42670P_samples();
     uint32_t ICM42670P_sampleAge();
     uint32_t ICM42670P_recoveries();

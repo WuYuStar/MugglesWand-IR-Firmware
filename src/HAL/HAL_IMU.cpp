@@ -19,7 +19,11 @@ QueueHandle_t icm42670p_queue = NULL;
 SemaphoreHandle_t imu_sem = NULL;
 QueueSetHandle_t imu_queue_set = NULL;
 static std::atomic<uint32_t> sampleCount{0},lastSampleMs{0},recoveries{0};
+enum class SleepPreparation { Idle, Pending, Ready, Failed, Cancelled };
+static std::atomic<SleepPreparation> sleepPreparation{SleepPreparation::Idle};
 static uint32_t lastRestartMs=0,imuGeneration=0;
+static int8_t requestedMux = -1; // Retained across failed starts so the IMU task can retry.
+static std::atomic<bool> sampling{false};
 
 // ======================== 有效手势状态机 ========================
 // 状态定义
@@ -377,7 +381,7 @@ void event_cb(inv_imu_sensor_event_t *evt)
         }
 
         if(!isfinite(valid_gx)||!isfinite(valid_gz))return;
-        lastSampleMs=millis();++sampleCount;
+        lastSampleMs=millis();++sampleCount;sampling.store(true);
         current_sta = detect_valid_gesture(valid_gx, valid_gz); // 实时判断前100个点是否为有效数据
 
         static int8_t last_sta = -1; // 记录上一次的状态
@@ -428,6 +432,74 @@ void IRAM_ATTR imuDataReady(void)
         portYIELD_FROM_ISR();
 }
 
+static int armMotionWake()
+{
+    if (IMU.model() == ICM42670::Model::Sensor42607P) {
+        pinMode(PIN_IMU_INT, INPUT_PULLUP);
+        // 32 register counts correspond to approximately 125 mg.
+        return IMU.startWakeOnMotion(32);
+    }
+    return IMU.startWakeOnMotion(100);
+}
+
+static volatile bool wakeProbeEdge = false;
+
+static void IRAM_ATTR recordWakeProbeEdge()
+{
+    wakeProbeEdge = true;
+}
+
+static void testMotionWake()
+{
+    if (IMU.model() != ICM42670::Model::Sensor42607P || !HAL::ICM42670P_ready()) {
+        DualSerial.println("[WoM] Probe requires a sampling ICM-42607-P");
+        return;
+    }
+    const int8_t previousMux = requestedMux;
+    HAL::ICM42670P_stop();
+    const int result = armMotionWake();
+    if (result == 0) {
+        wakeProbeEdge = false;
+        attachInterrupt(PIN_IMU_INT, recordWakeProbeEdge, FALLING);
+        DualSerial.println("[WoM] Armed; move the wand within 30 seconds");
+        const uint32_t start = millis();
+        while (!wakeProbeEdge && millis() - start < 30000) vTaskDelay(pdMS_TO_TICKS(10));
+        const bool edge = wakeProbeEdge;
+        // Keep reads outside the INT pulse if INT1 interferes with the bus.
+        if (edge) vTaskDelay(pdMS_TO_TICKS(10));
+        uint8_t axes = 0;
+        const int status = IMU.motionWakeStatus(axes);
+        DualSerial.printf("[WoM] IRQ=%d, SDA=%d, SCL=%d, axes=0x%02x, status=%d\n",
+                          edge, digitalRead(PIN_IMU_SDA), digitalRead(PIN_IMU_SCL), axes, status);
+        detachInterrupt(PIN_IMU_INT);
+    } else {
+        DualSerial.printf("[WoM] Arm failed at step %d\n", result);
+    }
+    HAL::ICM42670P_start(previousMux);
+}
+
+static void prepareMotionWake()
+{
+    if (sleepPreparation.load() != SleepPreparation::Pending) {
+        sleepPreparation.store(SleepPreparation::Idle);
+        return;
+    }
+    const int8_t previousMux = requestedMux;
+    HAL::ICM42670P_stop();
+    int result = armMotionWake();
+    if (result == 0 && IMU.model() == ICM42670::Model::Sensor42607P &&
+        digitalRead(PIN_IMU_INT) == LOW) result = -17;
+    DualSerial.printf("[IMU] Wake-on-motion setup result=%d\n", result);
+    auto expected = SleepPreparation::Pending;
+    if (result == 0 && sleepPreparation.compare_exchange_strong(expected, SleepPreparation::Ready)) return;
+
+    if (previousMux != -1) HAL::ICM42670P_start(previousMux);
+    expected = SleepPreparation::Pending;
+    if (!sleepPreparation.compare_exchange_strong(expected, SleepPreparation::Failed)) {
+        sleepPreparation.store(SleepPreparation::Idle);
+    }
+}
+
 static void icm42670p_task(void *pvParameters)
 {
     SystemEvent event;
@@ -435,7 +507,8 @@ static void icm42670p_task(void *pvParameters)
     while (1)
     {
         // 等待队列集中任一成员被激活（IMU数据就绪或事件队列有事件）
-        activated_member = xQueueSelectFromSet(imu_queue_set, pdMS_TO_TICKS(50));
+        activated_member = xQueueSelectFromSet(imu_queue_set,
+            pdMS_TO_TICKS(IMU.model() == ICM42670::Model::Sensor42607P ? 10 : 50));
         if (activated_member == imu_sem)
         {
             if (xSemaphoreTake(imu_sem, 0) == pdTRUE)
@@ -444,13 +517,14 @@ static void icm42670p_task(void *pvParameters)
             }
         }
         else if(!activated_member && imu_data_mux!=-1){
-            // Recover a missed FIFO edge (e.g. during an NVS flash write).
+            // Poll the 42607-P or recover a missed 42670-P FIFO interrupt.
             IMU.getDataFromFifo(event_cb);
         }
         else if (activated_member == icm42670p_queue)
         {
             if (xQueueReceive(icm42670p_queue, &event, 0) == pdTRUE)
             {
+                if (sleepPreparation.load() == SleepPreparation::Ready) continue;
                 switch (event.id)
                 {
                 case EVENT_IMU_SET_MUX:
@@ -459,14 +533,17 @@ static void icm42670p_task(void *pvParameters)
                 case EVENT_IMU_RESET_MUX:
                     HAL::ICM42670P_stop();
                     break;
-                case EVENT_IMU_SET_WOM:
-                    IMU.startWakeOnMotion(100);
+                case EVENT_IMU_PREPARE_SLEEP:
+                    prepareMotionWake();
+                    break;
+                case EVENT_IMU_TEST_MOTION_WAKE:
+                    testMotionWake();
                     break;
                 }
             }
         }
-        if(imu_data_mux!=-1&&!HAL::ICM42670P_ready()&&millis()-lastRestartMs>=1000){
-            ++recoveries;HAL::ICM42670P_start(imu_data_mux);
+        if(requestedMux!=-1&&!HAL::ICM42670P_ready()&&millis()-lastRestartMs>=1000){
+            ++recoveries;HAL::ICM42670P_start(requestedMux);
         }
     }
 }
@@ -475,7 +552,9 @@ void HAL::ICM42670P_stop()
 {
     if (!icm42670p_task_handle)
         return;
+    requestedMux = -1;
     imu_data_mux = -1; // 标记为未启动状态
+    sampling.store(false);
     current_sta = -1;
     imuGeneration=resetGestureBuffer();detect_valid_gesture(0,0,true);
     IMU.enterSleepMode();
@@ -490,10 +569,12 @@ void HAL::ICM42670P_start(int8_t data_mux)
         return; // 无效参数，拒绝启动
     }
 
+    requestedMux = data_mux;
     imuGeneration=resetGestureBuffer();
     current_sta=detect_valid_gesture(0,0,true);
     if(imu_data_mux==-1||!ICM42670P_ready()){
         imu_data_mux=-1;lastRestartMs=millis();
+        sampling.store(false);
         q0=1;q1=q2=q3=exInt=eyInt=ezInt=0;
         IMU.enterSleepMode();
         if(IMU.enableDataFromFifoInterrupt(PIN_IMU_INT,imuDataReady)!=0){
@@ -528,6 +609,7 @@ bool HAL::ICM42670P_init()
 
     // 创建队列集 (容量 = 队列长度 + 信号量长度)
     imu_queue_set = xQueueCreateSet(8 + 1);
+    if (!icm42670p_queue || !imu_sem || !imu_queue_set) return false;
 
     // 将队列和信号量添加到队列集中
     xQueueAddToSet(icm42670p_queue, imu_queue_set);
@@ -535,7 +617,8 @@ bool HAL::ICM42670P_init()
 
     EventBus::subscribe(EVENT_IMU_SET_MUX, icm42670p_queue);
     EventBus::subscribe(EVENT_IMU_RESET_MUX, icm42670p_queue);
-    EventBus::subscribe(EVENT_IMU_SET_WOM, icm42670p_queue);
+    EventBus::subscribe(EVENT_IMU_PREPARE_SLEEP, icm42670p_queue);
+    EventBus::subscribe(EVENT_IMU_TEST_MOTION_WAKE, icm42670p_queue);
 
     xTaskCreatePinnedToCore(
         icm42670p_task,
@@ -559,9 +642,42 @@ void HAL::enable_AnimStatus()
 
 int8_t HAL::ICM42670P_getDataMux(void) { return imu_data_mux; }
 
-bool HAL::ICM42670P_ready(){return imu_data_mux!=-1&&sampleCount&&millis()-lastSampleMs<500;}
+bool HAL::ICM42670P_ready(){return imu_data_mux!=-1&&sampling.load()&&millis()-lastSampleMs<500;}
 uint32_t HAL::ICM42670P_samples(){return sampleCount;}
 uint32_t HAL::ICM42670P_sampleAge(){return sampleCount?millis()-lastSampleMs:UINT32_MAX;}
 uint32_t HAL::ICM42670P_recoveries(){return recoveries;}
 
-bool HAL::ICM42670P_idle(){return ICM42670P_ready()&&imu_data_mux==2&&current_sta==STATE_STILL_DETECTED;}
+const char *HAL::ICM42670P_modelName()
+{
+    switch (IMU.model()) {
+        case ICM42670::Model::Sensor42607P: return "ICM-42607-P";
+        case ICM42670::Model::Sensor42670P: return "ICM-42670-P";
+        default: return "";
+    }
+}
+
+bool HAL::ICM42670P_supportsMotionWake() { return IMU.model() != ICM42670::Model::Unknown; }
+
+bool HAL::ICM42670P_idle(){
+    if (WAND_42607_SLEEP_TRIAL && IMU.model() == ICM42670::Model::Sensor42607P) return false;
+    return ICM42670P_supportsMotionWake()&&ICM42670P_ready()&&imu_data_mux==2&&current_sta==STATE_STILL_DETECTED;
+}
+
+bool HAL::ICM42670P_prepareSleep() {
+    auto expected = SleepPreparation::Idle;
+    if (!ICM42670P_supportsMotionWake() ||
+        !sleepPreparation.compare_exchange_strong(expected, SleepPreparation::Pending)) return false;
+    if (!EventBus::publish(EVENT_IMU_PREPARE_SLEEP)) {
+        sleepPreparation.store(SleepPreparation::Idle);
+        return false;
+    }
+    const uint32_t start = millis();
+    while (sleepPreparation.load() == SleepPreparation::Pending && millis() - start < 2000) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    expected = SleepPreparation::Pending;
+    if (sleepPreparation.compare_exchange_strong(expected, SleepPreparation::Cancelled)) return false;
+    if (expected == SleepPreparation::Ready) return true;
+    sleepPreparation.store(SleepPreparation::Idle);
+    return false;
+}
